@@ -9,7 +9,7 @@ using Plots
     maxdisp = 0.5                               # dt is determined s.t. no marker moves further than maxdisp cells
     # physical parameters
     g_y = 9.81                                  # earth gravity, m/s^2
-    lx, ly = 100000, 100000                     # domain size
+    lx, ly = 100000, 100000                     # domain size, m
     μ_air, μ_matrix, μ_plume = 1e17, 1e19, 1e18 # Viscosity, Pa*s
     ρ_air, ρ_matrix, ρ_plume = 1   , 3300, 3200 # Density, kg/m^3
     plume_x, plume_y = lx/2, ly/2               # plume midpoint
@@ -66,6 +66,8 @@ using Plots
 
     # --- TIMESTEPPING ---
     for t=1:nt
+        @show t
+
         # interpolate material properties to grid
         bilinearMarkerToGrid!(x_vy,y_vy,ρ_vy,xy_m,ρ_m,dx,dy)
         bilinearMarkerToGrid!(x   ,y   ,μ_b ,xy_m,μ_m,dx,dy)
@@ -79,7 +81,7 @@ using Plots
 
         # move markers
         dt = maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
-        moveMarkersRK4!(xy_m,Nm,dt,lx,ly)
+        moveMarkersRK4!(xy_m,Nm,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
     end
 
 
@@ -89,51 +91,126 @@ end
 
 @views function solveStokes!(Vx,Vy)
     # TODO
-    Vx .= 1
-    Vy .= 1
+    Vx[3:end-2,3:end-2] .= 0.001
+    Vy[3:end-2,3:end-2] .= 0001
     return nothing
 end
 
+function bilinearInterp(v1,v2,v3,v4,dxij,dyij)
+    s1 = (1-dxij)*(1-dyij)*v1
+    s2 =    dxij *(1-dyij)*v2
+    s3 = (1-dxij)*   dyij*v3
+    s4 =    dxij *   dyij*v4
+    return s1+s2+s3+s4
+end
 
-@views function velocitiesGridToMarker!()
-    # TODO
-    return nothing
+#interpolates grid velocities to postion x,y
+@views function interpolateV(x,y,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dx,dy)
+    # Interpolate Vx
+    ix,iy,dxij,dyij = topleftIndexRelDist(x_vx[1],y_vx[1],x,y,dx,dy)
+    #@assert true # TODO index range failsafe
+    if ix >= 35
+        ix
+    end
+    v1 = Vx[ix  ,iy  ]
+    v2 = Vx[ix+1,iy  ]
+    v3 = Vx[ix  ,iy+1]
+    v4 = Vx[ix+1,iy+1]
+    vx = bilinearInterp(v1,v2,v3,v4,dxij,dyij)
+    # Continuity-based velocity correction for Vx: the interpolated field will have zero divergence!
+    # TODO: no correction if too close to boundary: Vx and Vy arrays must have more ghost cells for multi-GPU!
+    correction = 0.0
+    # right half of cell => extend stencil to the right
+    if dxij > 0.5 && ix+2 <= size(Vx,1)
+        v5 = Vx[ix+2,iy  ]
+        v6 = Vx[ix+2,iy+1]
+        correction = 0.5*(dxij-0.5)^2*(
+                        (1-dyij)*(v1-2v2+v5) +
+                           dyij *(v3-2v4+v6))
+    # left  half of cell => extend stencil to the left
+    elseif dxij < 0.5 && ix-1 >= 1
+        v5 = Vx[ix-1,iy]
+        v6 = Vx[ix-1,iy+1]
+        correction = 0.5*(dxij-0.5)^2*(
+                        (1-dyij)*(v5-2v1+v2) +
+                           dyij *(v6-2v3+v4))
+    end
+    vx += correction
+
+    # Interpolate Vy
+    ix,iy,dxij,dyij = topleftIndexRelDist(x_vy[1],y_vy[1],x,y,dx,dy)
+    #@assert # TODO index range failsafe
+    v1 = Vy[ix,iy]
+    v2 = Vy[ix+1,iy]
+    v3 = Vy[ix,iy+1]
+    v4 = Vy[ix+1,iy+1]
+    vy = bilinearInterp(v1,v2,v3,v4,dxij,dyij)
+    # Continuity-based velocity correction for Vy: the interpolated field will have zero divergence!
+    # TODO: no correction if too close to boundary: Vx and Vy arrays must have more ghost cells for multi-GPU!
+    correction = 0.0
+    # lower half of cell => extend stencil to the bottom
+    if dyij > 0.5 && iy+2 <= size(Vy,2)
+        v5 = Vy[ix  ,iy+2]
+        v6 = Vy[ix+1,iy+2]
+        correction = 0.5*(dyij-0.5)^2*(
+                        (1-dxij)*(v1-2v3+v5) +
+                           dxij *(v2-2v4+v6))
+    # upper half of cell => extend stencil to the top
+    elseif dyij < 0.5 && iy-1 >=1
+        v5 = Vy[ix  ,iy-1]
+        v6 = Vy[ix+1,iy-1]
+        correction = 0.5*(dyij-0.5)^2*(
+                        (1-dxij)*(v5-2v1+v3) +
+                           dxij *(v6-2v2+v4))
+    end
+    vx += correction
+
+    return vx, vy
 end
 
 
-@views function moveMarkersRK4!(xy_m,Nm,dt,lx,ly)
-    ## interpolate Vx, Vy => effective marker velocities vxm, vym according to RK4
-    vxm,vym = zeros(Nm),zeros(Nm)
+@views function moveMarkersRK4!(xy_m,Nm,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
+
     # Runge-Kutta 4th order
     rk4_dt = [0.0, 0.5, 0.5, 1.0] * dt;
     rk4_wt = [1, 2, 2, 1];
     rk4_wt = rk4_wt/sum(rk4_wt);
 
-    vx_rk = zeros(Nm);
-    vy_rk = zeros(Nm);
-    x_rk = zeros(Nm);
-    y_rk = zeros(Nm);
-    for it=eachindex(rk4_wt) # loop over points A-D
-        # compute coordinates of current point
-        x_rk .= xy_m[:,1] + rk4_dt[it]*vx_rk;
-        y_rk .= xy_m[:,2] + rk4_dt[it]*vy_rk;
-        # compute velocities at current point => get vx_rk, vy_rk
-        velocitiesGridToMarker!() # TODO vx_rk
-        velocitiesGridToMarker!() # TODO vy_rk
-        # add weighted current velocities to 'effective' velocity
-        vxm = vxm + rk4_wt[it]*vx_rk;
-        vym = vym + rk4_wt[it]*vy_rk;
-    end
+    for m=1:Nm # move every particle separately => nice for parallelizing
 
-    ## actually move particles
-    xy_m[:,1] .+= vxm*dt;
-    xy_m[:,1] .+= vym*dt;
+        x_old = xy_m[m,1] # old position
+        y_old = xy_m[m,2]
+        vx_eff, vy_eff = 0.0, 0.0 # 'effective' velocity for explicit update: x_new = x_old + v_eff*dt
+        vx_rk , vy_rk  = 0.0, 0.0 # velocity at previous/current point
 
-    # explicitly restrict particles to stay on domain
-    # (optional, does not really change anything if BC correctly implemented and dt small enough)
-    # !! CHANGE, if global domain is not 0-lx and 0-ly !!
-    for m=1:Nm
-        xy_m[m,:] .= min.(max.(xy_m[m,:],0),[lx,ly]);
+        for it=eachindex(rk4_wt) # loop over points A-D
+            it
+            # position of current point based on previous point velocities
+            x_rk = x_old + rk4_dt[it]*vx_rk
+            y_rk = y_old + rk4_dt[it]*vy_rk
+
+            # interpolate velocity to current point
+            vx_rk, vy_rk = interpolateV(x_rk,y_rk,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dx,dy)
+
+            # apply RK4 scheme: add up weighted velocities
+            vx_eff += rk4_wt[it]*vx_rk
+            vy_eff += rk4_wt[it]*vy_rk
+        end
+
+        # move particle
+        x_new = x_old + vx_eff*dt
+        y_new = y_old + vy_eff*dt
+
+        # explicitly restrict particles to stay on domain
+        # (optional, does not really change anything if BC correctly implemented and dt small enough)
+        # !! CHANGE, if global domain is not 0-lx and 0-ly !!
+        x_new = min(max(x_new,0),lx)
+        y_new = min(max(y_new,0),ly)
+
+        # write back updated positions
+        xy_m[m,1] = x_new
+        xy_m[m,2] = y_new
+
     end
 
     return nothing
@@ -156,6 +233,21 @@ function showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p, lx,l
     return nothing
 end
 
+# compute indices ix, iy of top left node w.r.t position (x,y)
+# as well as relative distances (x_grid[ix]-x)/dx, (y_grid[iy]-y)/dy
+# !!! ix,iy may be out of bounds if the grid does not cover (x,y), this is not checked here
+function topleftIndexRelDist(x_grid_min, y_grid_min, x, y, dx, dy)
+    # indices: may be out of bounds if the grid does not cover (x,y)
+    ix = floor(Int,(x-x_grid_min)/dx) + 1
+    iy = floor(Int,(y-y_grid_min)/dy) + 1
+    # position of top left node with index (ix,iy)
+    x_ix = x_grid_min + (ix-1)*dx
+    y_iy = y_grid_min + (iy-1)*dy
+    # compute relative distances
+    dxij = (x-x_ix)/dx
+    dyij = (y-y_iy)/dy
+    return ix,iy,dxij,dyij
+end
 
 @views function bilinearMarkerToGrid!(x_grid,y_grid,val_grid,xy_m,val_m,dx,dy)
     Nx,Ny = size(val_grid)
@@ -167,15 +259,10 @@ end
 
         xm,ym = xy_m[m,:]
 
-        # get indices of top left node w.r.t marker m.
+        # get indices and relative distance to top left node w.r.t marker m.
         # may be 0, when the marker is further left or up than the first grid node
-        ix = floor(Int,(xm-x_grid[1])/dx) + 1
-        iy = floor(Int,(ym-y_grid[1])/dy) + 1
+        ix,iy,dxmij,dymij = topleftIndexRelDist(x_grid[1],y_grid[1],xm,ym,dx,dy)
         @assert ix>=0 && ix<=Nx && iy>=0 && iy<=Ny
-
-        # compute relative distances to the top left node
-        dxmij = if ix == 0 (xm-x_grid[1]+dx)/dx else (xm-x_grid[ix])/dx end
-        dymij = if iy == 0 (ym-y_grid[1]+dy)/dy else (ym-y_grid[iy])/dy end
         @assert dxmij>=0 && dxmij<=1 && dymij>=0 && dymij<=1
 
         # sum up weights, if the respective node exists
