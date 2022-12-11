@@ -109,9 +109,6 @@ end
     # Interpolate Vx
     ix,iy,dxij,dyij = topleftIndexRelDist(x_vx[1],y_vx[1],x,y,dx,dy)
     #@assert true # TODO index range failsafe
-    if ix >= 35
-        ix
-    end
     v1 = Vx[ix  ,iy  ]
     v2 = Vx[ix+1,iy  ]
     v3 = Vx[ix  ,iy+1]
