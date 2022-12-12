@@ -68,7 +68,7 @@ function CellList_rearrangeParticles!(invCellSize, numCells, counts, offsets, p,
     cIdx = CellList_getCellIndex!(invCellSize, numCells, p[1, i+1], p[2, i+1])
     #newIndex = offsets[cIdx] + CUDA.atomic_add!(pointer(counts, cIdx), 1)
     newIndex = offsets[cIdx] + counts[cIdx] + 1
-    @cushow (cIdx, offsets[cIdx], counts[cIdx], newIndex)
+    #@cushow (i, cIdx, offsets[cIdx], counts[cIdx], newIndex)
     CUDA.@atomic counts[cIdx] += one(eltype(counts))
     pNew[1, newIndex] = p[1, i+1]
     pNew[2, newIndex] = p[2, i+1]
@@ -85,7 +85,7 @@ end
   cl.counts .= 0
   #CUDA.@sync @cuda blocks = blocks threads = threads CellList_countParticlePerCell!(cl.invCellSize, cl.numCells, cl.counts, pDev, numParticles)
   CUDA.@sync @cuda CellList_countParticlePerCell!(cl.invCellSize, cl.numCells, cl.counts, pDev, numParticles)
-  @show cl.counts
+  #@show cl.counts
 
   # stage 2: compute offsets
   CellList_inclusiveSum!(cl)
@@ -93,12 +93,12 @@ end
   test = Array(cl.offsets)
   pushfirst!(test, 0)
   offsets = CuArray(test)
-  @show offsets
+  #@show offsets
 
   # stage 3: reorder particles into cells
   cl.counts .= 0
   CUDA.@sync @cuda CellList_rearrangeParticles!(cl.invCellSize, cl.numCells, cl.counts, offsets, pDev, pSortedDev, numParticles)
-  @show cl.counts
+  #@show cl.counts
 end
 
 @testset "Cell List" begin
@@ -123,7 +123,7 @@ end
   @test size(cl.counts, 1) == 4
   @test size(cl.offsets, 1) == 4
 
-  numParticles = 5
+  numParticles = 500
   pHost = zeros(2, numParticles)
   for i = 1:numParticles
     pHost[1, i] = rand() * domainSize_x
@@ -132,14 +132,11 @@ end
   pSortedHost = sortslices(pHost, dims=2)
 
   pDev = CuArray(pHost)
-  pSortedDev = CuArray(pHost)
-  CellList_build(cl, pDev, pSortedDev, numParticles)
+  pNewDev = CuArray(pHost)
+  CellList_build(cl, pDev, pNewDev, numParticles)
+  pSortedDevHost = sortslices(Array(pNewDev), dims=2)
 
-  @show pHost
-  @show pSortedHost
-  @show pSortedDev
-
-  @test all(pSortedHost .≈ Array(pSortedDev))
+  @test all(pSortedHost .≈ pSortedDevHost)
 
   #GC.enable(true)
 end
