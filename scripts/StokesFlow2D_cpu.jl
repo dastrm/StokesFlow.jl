@@ -1,11 +1,14 @@
-using Plots
+const USE_GPU = false
+using Plots,Plots.Measures
+include("StokesSolver.jl")
 
+default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)#,margin=10mm,lw=6,labelfontsize=11,tickfontsize=11,titlefontsize=11)
 
 @views function StokesFlow2D()
 
     # --- PARAMETERS ---
     # time
-    nt = 10                                     # number of timesteps
+    nt = 100                                    # number of timesteps
     maxdisp = 0.5                               # dt is determined s.t. no marker moves further than maxdisp cells
     # physical parameters
     g_y = 9.81                                  # earth gravity, m/s^2
@@ -31,7 +34,6 @@ using Plots
     xy_m       = zeros(Nm,2)                    # marker coords, TODO: maybe better 2 arrays? or dimensions (2,Nm)? or array of structs?
     ρ_m        = zeros(Nm)                      # marker property: density
     μ_m        = zeros(Nm)                      # marker property: viscosity
-    vx_m, vy_m = zeros(Nm), zeros(Nm)           # marker velocities
 
     # grid array allocations
     # maybe Vx & Vy sizes need adjustments for marker interpolation (multi-GPU case, simplify single GPU). TODO
@@ -41,6 +43,19 @@ using Plots
     ρ_vy = zeros(Nx+1,Ny  )
     μ_b  = zeros(Nx  ,Ny  ) # μ on basic nodes
     μ_p  = zeros(Nx-1,Ny-1) # μ on pressure nodes
+
+    # additional arrays for Stokes Solver
+    τxx   = zeros(Nx-1,Ny-1)
+    τyy   = zeros(Nx-1,Ny-1)
+    τxy   = zeros(Nx  ,Ny  )
+    ∇V    = zeros(Nx-1,Ny-1)
+    dτPt  = zeros(Nx-1,Ny-1)
+    Rx    = zeros(Nx-2,Ny-1)
+    Ry    = zeros(Nx-1,Ny-2)
+    dVxdτ = zeros(Nx-2,Ny-1)
+    dVydτ = zeros(Nx-1,Ny-2)
+    dτVx  = zeros(Nx-2,Ny-1)
+    dτVy  = zeros(Nx-1,Ny-2)
 
     # coordinates for all grid points
     x    = [(ix-1)*dx       for ix=1:Nx  ] # basic nodes
@@ -74,10 +89,12 @@ using Plots
         bilinearMarkerToGrid!(x_p ,y_p ,μ_p ,xy_m,μ_m,dx,dy)
 
         # calculate velocities on grid
-        solveStokes!(Vx,Vy)
+        solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
+            τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
+            g_y, dx, dy, Nx, Ny)
 
         # plot current state
-        showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p, lx,ly)
+        showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p, xy_m,ρ_m, lx,ly)
 
         # move markers
         dt = maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
@@ -88,13 +105,6 @@ using Plots
     return nothing
 end
 
-
-@views function solveStokes!(Vx,Vy)
-    # TODO
-    Vx[3:end-2,3:end-2] .= 0.001
-    Vy[3:end-2,3:end-2] .= 0001
-    return nothing
-end
 
 function bilinearInterp(v1,v2,v3,v4,dxij,dyij)
     s1 = (1-dxij)*(1-dyij)*v1
@@ -108,7 +118,11 @@ end
 @views function interpolateV(x,y,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dx,dy)
     # Interpolate Vx
     ix,iy,dxij,dyij = topleftIndexRelDist(x_vx[1],y_vx[1],x,y,dx,dy)
-    #@assert true # TODO index range failsafe
+    #index range failsafe, in case advection moves the particles out of domain
+    if ix < 1 ix=1; dxij=0.0 end
+    if iy < 1 iy=1; dyij=0.0 end
+    if ix >= size(Vx,1) ix=size(Vx,1)-1; dxij=1.0 end
+    if iy >= size(Vx,2) iy=size(Vx,2)-1; dyij=1.0 end
     v1 = Vx[ix  ,iy  ]
     v2 = Vx[ix+1,iy  ]
     v3 = Vx[ix  ,iy+1]
@@ -136,7 +150,11 @@ end
 
     # Interpolate Vy
     ix,iy,dxij,dyij = topleftIndexRelDist(x_vy[1],y_vy[1],x,y,dx,dy)
-    #@assert # TODO index range failsafe
+    #index range failsafe, in case advection moves the particles out of domain
+    if ix < 1 ix=1; dxij=0.0 end
+    if iy < 1 iy=1; dyij=0.0 end
+    if ix >= size(Vy,1) ix=size(Vy,1)-1; dxij=1.0 end
+    if iy >= size(Vy,2) iy=size(Vy,2)-1; dyij=1.0 end
     v1 = Vy[ix,iy]
     v2 = Vy[ix+1,iy]
     v3 = Vy[ix,iy+1]
@@ -214,19 +232,18 @@ end
 end
 
 
-function showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p, lx,ly)
-    # Visualization
-    #p1 = heatmap(x_p ,  y_p, Array(P)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Pressure")
-    #p2 = heatmap(x_vy, y_vy, Array(Vy)', yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Vy")
-    #p4 = heatmap(X[2:end-1], Yv[2:end-1], log10.(abs.(Array(Ry)')), aspect_ratio=1, xlims=(X[2],X[end-1]), ylims=(Yv[2],Yv[end-1]), c=:inferno, title="log10(Ry)")
-    #p5 = plot(err_evo2,err_evo1, legend=false, xlabel="# iterations", ylabel="log10(error)", linewidth=2, markershape=:circle, markersize=3, labels="max(error)", yaxis=:log10)
-    #display(plot(p1, p2, p4, p5))
+function showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p,xy_m,ρ_m, lx,ly)
 
-    p6 = heatmap(x_vy ,  y_vy, Array(ρ_vy)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="ρ_vy")
-    p7 = heatmap(x    ,  y   , Array(μ_b )' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="μ_b" )
-    p8 = heatmap(x_p  ,  y_p , Array(μ_p )' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="μ_p" )
+    #p1 = heatmap(x_vy ,  y_vy, Array(ρ_vy)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="ρ_vy")
+    p2 = heatmap(x    ,  y   , Array(μ_b )' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="μ_b" )
+    #p3 = heatmap(x_p  ,  y_p , Array(μ_p )' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="μ_p" )
+    #p4 = scatter(xy_m[:,1],xy_m[:,2],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false)
 
-    display(plot(p6,p7,p8))
+    p5 = heatmap(x_p ,  y_p, Array(P)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Pressure")
+    p6 = heatmap(x_vx, y_vx, Array(Vx)', yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Vx")
+    p7 = heatmap(x_vy, y_vy, Array(Vy)', yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Vy")
+
+    display(plot(p2,p5,p6,p7))
     return nothing
 end
 
@@ -260,7 +277,8 @@ end
         # may be 0, when the marker is further left or up than the first grid node
         ix,iy,dxmij,dymij = topleftIndexRelDist(x_grid[1],y_grid[1],xm,ym,dx,dy)
         @assert ix>=0 && ix<=Nx && iy>=0 && iy<=Ny
-        @assert dxmij>=0 && dxmij<=1 && dymij>=0 && dymij<=1
+        tol=1e-14
+        @assert dxmij>=0-tol && dxmij<=1+tol && dymij>=0-tol && dymij<=1+tol
 
         # sum up weights, if the respective node exists
         if iy>0

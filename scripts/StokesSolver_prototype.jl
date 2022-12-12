@@ -17,6 +17,8 @@ What's still missing:
 - Performance (Kernel fusing, tuning relaxation parameters, ...)
   see e.g. https://github.com/PTsolvers/PseudoTransientStokes.jl/blob/main/scripts/Stokes2D_ve_perf.jl
 - Handle the units more elegantly (non-dimensional, just omit?)
+- Figure out timestep during iterations and introduce free surface stabilization
+  (use ρ implicitly advected to next timestep)
 =#
 
 const USE_GPU = true
