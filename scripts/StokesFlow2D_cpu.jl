@@ -8,7 +8,7 @@ default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)#,ma
 
     # --- PARAMETERS ---
     # time
-    nt = 100                                    # number of timesteps
+    nt = 20                                     # number of timesteps
     maxdisp = 0.5                               # dt is determined s.t. no marker moves further than maxdisp cells
     # physical parameters
     g_y = 9.81                                  # earth gravity, m/s^2
@@ -77,11 +77,13 @@ default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)#,ma
     setInitialMarkerProperties!(xy_m, ρ_m, μ_m, Nm, μ_air, μ_matrix, μ_plume, ρ_air, ρ_matrix, ρ_plume, plume_x, plume_y, plume_r, air_height)
     vline(x)
     hline!(y)
-    display(scatter!(xy_m[:,1],xy_m[:,2],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false))
+    display(scatter!(xy_m[:,1],xy_m[:,2],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false,markersize=3,markerstrokewidth=0))
 
     # --- TIMESTEPPING ---
+    dt = 0.0
+    t_tot = 0.0
     for t=1:nt
-        @show t
+        @show t, t_tot
 
         # interpolate material properties to grid
         bilinearMarkerToGrid!(x_vy,y_vy,ρ_vy,xy_m,ρ_m,dx,dy)
@@ -89,16 +91,19 @@ default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)#,ma
         bilinearMarkerToGrid!(x_p ,y_p ,μ_p ,xy_m,μ_m,dx,dy)
 
         # calculate velocities on grid
-        solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
-            τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
-            g_y, dx, dy, Nx, Ny)
+        dt = solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
+                τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
+                g_y, dx, dy, Nx, Ny,
+                dt, maxdisp; use_free_surface_stabilization=true)
 
         # plot current state
         showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p, xy_m,ρ_m, lx,ly)
 
         # move markers
-        dt = maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
+        @assert dt ≈ maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
         moveMarkersRK4!(xy_m,Nm,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
+
+        t_tot += dt
     end
 
 
@@ -235,15 +240,16 @@ end
 function showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p,xy_m,ρ_m, lx,ly)
 
     #p1 = heatmap(x_vy ,  y_vy, Array(ρ_vy)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="ρ_vy")
-    p2 = heatmap(x    ,  y   , Array(μ_b )' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="μ_b" )
+    p2 = heatmap(x     ,  y   , Array(μ_b )' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="μ_b" )
     #p3 = heatmap(x_p  ,  y_p , Array(μ_p )' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="μ_p" )
-    #p4 = scatter(xy_m[:,1],xy_m[:,2],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false)
+    #p4 = scatter(xy_m[:,1],xy_m[:,2],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false,markersize=3,markerstrokewidth=0)
 
     p5 = heatmap(x_p ,  y_p, Array(P)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Pressure")
     p6 = heatmap(x_vx, y_vx, Array(Vx)', yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Vx")
     p7 = heatmap(x_vy, y_vy, Array(Vy)', yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Vy")
 
     display(plot(p2,p5,p6,p7))
+    #display(plot(p4))
     return nothing
 end
 

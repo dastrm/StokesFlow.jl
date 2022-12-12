@@ -10,12 +10,26 @@ else
 end
 using Plots, Printf, Statistics
 
-# Currently this is just copy-paste from StokesSolver_prototype.jl
-# - Important: Figure out timestep during iterations and introduce free surface stabilization
-#   (use ρ implicitly advected to next timestep)
+# ADDITIONAL PARALLEL STENCIL MACROS, needed for free surface stabilization
+import ..ParallelStencil: INDICES
+ix, iy = INDICES[1], INDICES[2]
+ixi, iyi = :($ix+1), :($iy+1)
+# average in both dimension, and inner elements in y. corresponds to @av(@inn_y(Vx))
+macro av_inn_y(A::Symbol)  esc(:(($A[$ix  ,$iyi ] + $A[$ix+1,$iyi ] + $A[$ix,$iyi+1] + $A[$ix+1,$iyi+1])*0.25 )) end
+# central finite differences in x, inner elements in y. corresponds to @d_xi(@av_x(ρ_vy))
+macro   d_xi_2(A::Symbol)  esc(:( $A[$ix+2,$iyi ] - $A[$ix  ,$iyi] )) end
+# central finite differences in y, inner elements in x. corresponds to @d_yi(@av_y(ρ_vy))
+macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
+
+# STOKES SOLVER
+# Currently this is just:
+# - copy-paste from StokesSolver_prototype.jl
+# - additional free surface stabilization (using the density implicitly advected to the next timestep)
+#   This is done to avoid oscillations of the free surface.
 @views function solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
                             τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
-                            g_y, dx, dy, Nx, Ny)
+                            g_y, dx, dy, Nx, Ny,
+                            dt, maxdisp; use_free_surface_stabilization::Bool=true)
 
     Vdmp      = 4.0
     Vsc       = 0.25        # relaxation paramter for the momentum equations pseudo-timesteps limiters
@@ -24,6 +38,10 @@ using Plots, Printf, Statistics
     max_nxy   = max(Nx,Ny)
     dampX     = 1.0-Vdmp/Nx # damping term for the x-momentum equation
     dampY     = 1.0-Vdmp/Ny # damping term for the y-momentum equation
+
+    if !use_free_surface_stabilization
+        dt=0.0
+    end
 
     # PT setup and iterations
     @parallel compute_timesteps!(dτVx, dτVy, dτPt, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
@@ -39,7 +57,7 @@ using Plots, Printf, Statistics
         # TODO make var names consistent
         @parallel compute_P!(∇V, P, Vx, Vy, dτPt, dx, dy)
         @parallel compute_τ!(∇V, τxx, τyy, τxy, Vx, Vy, μ_p, μ_b, dx, dy)
-        @parallel compute_dV!(Rx, Ry, dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, g_y, dampX, dampY, dx, dy)
+        @parallel compute_dV!(Rx, Ry, dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, dx, dy, dt)
         @parallel compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
 
         # Free slip BC
@@ -47,6 +65,10 @@ using Plots, Printf, Statistics
         @parallel (1:size(Vx,2)) bc_x_zero!(Vx)
         @parallel (1:size(Vy,1)) bc_y_zero!(Vy)
         @parallel (1:size(Vy,2)) bc_x_noflux!(Vy)
+
+        if use_free_surface_stabilization
+            dt = maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
+        end
 
         if iter%ncheck == 0
             # TODO compute error better
@@ -64,8 +86,11 @@ using Plots, Printf, Statistics
     T_eff    = A_eff/t_it
     @printf("Total steps = %d, err = %1.3e, time = %1.3e sec (@ T_eff = %1.2f GB/s) \n", niter, err, t2-t1, round(T_eff, sigdigits=2))
 
+    if !use_free_surface_stabilization
+        dt = maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
+    end
 
-    return nothing
+    return dt
 end
 
 @parallel function compute_timesteps!(dτVx, dτVy, dτPt, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
@@ -88,9 +113,10 @@ end
     return
 end
 
-@parallel function compute_dV!(Rx, Ry, dVxdτ, dVydτ, Pt, ρ_vy, τxx, τyy, τxy, g_y, dampX, dampY, dx, dy)
+@parallel function compute_dV!(Rx, Ry, dVxdτ, dVydτ, Pt, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, dx, dy, dt)
     @all(Rx)    = @d_xa(τxx)/dx + @d_yi(τxy)/dy - @d_xa(Pt)/dx
-    @all(Ry)    = @d_ya(τyy)/dy + @d_xi(τxy)/dx - @d_ya(Pt)/dy + @inn(ρ_vy)*g_y
+    @all(Ry)    = @d_ya(τyy)/dy + @d_xi(τxy)/dx - @d_ya(Pt)/dy + 
+                    g_y*(@inn(ρ_vy) - dt*(@av_inn_y(Vx)*@d_xi_2(ρ_vy)/(2*dx) + @inn(Vy)*@d_yi_2(ρ_vy)/(2*dy)))
     @all(dVxdτ) = dampX*@all(dVxdτ) + @all(Rx)
     @all(dVydτ) = dampY*@all(dVydτ) + @all(Ry)
     return
