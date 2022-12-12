@@ -14,11 +14,11 @@ using Plots, Printf, Statistics
 import ..ParallelStencil: INDICES
 ix, iy = INDICES[1], INDICES[2]
 ixi, iyi = :($ix+1), :($iy+1)
-# average in both dimension, and inner elements in y. corresponds to @av(@inn_y(Vx))
+# average in both dimension, and inner elements in y. corresponds to @av(@inn_y(..))
 macro av_inn_y(A::Symbol)  esc(:(($A[$ix  ,$iyi ] + $A[$ix+1,$iyi ] + $A[$ix,$iyi+1] + $A[$ix+1,$iyi+1])*0.25 )) end
-# central finite differences in x, inner elements in y. corresponds to @d_xi(@av_x(ρ_vy))
+# central finite differences in x, inner elements in y. corresponds to @d_xi(@av_x(..))
 macro   d_xi_2(A::Symbol)  esc(:( $A[$ix+2,$iyi ] - $A[$ix  ,$iyi] )) end
-# central finite differences in y, inner elements in x. corresponds to @d_yi(@av_y(ρ_vy))
+# central finite differences in y, inner elements in x. corresponds to @d_yi(@av_y(..))
 macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
 
 # STOKES SOLVER
