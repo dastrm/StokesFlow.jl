@@ -29,7 +29,9 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
 @views function solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
                             τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
                             g_y, dx, dy, Nx, Ny,
-                            dt, maxdisp; use_free_surface_stabilization::Bool=true)
+                            dt, maxdisp; use_free_surface_stabilization::Bool=true,
+                            ϵ=0.01,
+                            print_info::Bool=true)
 
     Vdmp      = 4.0
     Vsc       = 0.25        # relaxation paramter for the momentum equations pseudo-timesteps limiters
@@ -47,7 +49,7 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     @parallel compute_timesteps!(dτVx, dτVy, dτPt, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
     ncheck = 500
     t1 = 0; itert1 = 11
-    ϵ = 0.01 # tol
+    #ϵ = 0.01 # tol
     err_evo1=[]; err_evo2=[]
     err = 2ϵ; iter=1; niter=0; iterMax=100000
     while err > ϵ && iter <= iterMax
@@ -84,7 +86,9 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     t_it = (t2-t1)/(niter-itert1+1)
     A_eff    = (3*2)/1e9*Nx*Ny*sizeof(Data.Number) 
     T_eff    = A_eff/t_it
-    @printf("Total steps = %d, err = %1.3e, time = %1.3e sec (@ T_eff = %1.2f GB/s) \n", niter, err, t2-t1, round(T_eff, sigdigits=2))
+    if print_info
+        @printf("Total steps = %d, err = %1.3e, time = %1.3e sec (@ T_eff = %1.2f GB/s) \n", niter, err, t2-t1, round(T_eff, sigdigits=2))
+    end
 
     if !use_free_surface_stabilization
         dt = maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))

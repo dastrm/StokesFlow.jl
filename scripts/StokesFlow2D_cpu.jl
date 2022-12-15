@@ -1,14 +1,25 @@
 const USE_GPU = false
 using Plots,Plots.Measures
+using Test
+import Random
 include("StokesSolver.jl")
 
-default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)#,margin=10mm,lw=6,labelfontsize=11,tickfontsize=11,titlefontsize=11)
+default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)
 
-@views function StokesFlow2D()
+"""
+Input args:
+nt              : number of timesteps
+Nx, Ny          : number of grid points
+RAND_MARKER_POS : whether to add random perturbation to initial marker coords
+do_plot         : whether to create Plots
+print_info      : whether any info is printed to console
+
+Output: Currently just Vy, an array of size (Nx, Ny+1)
+"""
+@views function StokesFlow2D(;nt=20, Nx=35, Ny=45, RAND_MARKER_POS::Bool=true, do_plot::Bool=true, print_info::Bool=true)
 
     # --- PARAMETERS ---
     # time
-    nt = 20                                     # number of timesteps
     maxdisp = 0.5                               # dt is determined s.t. no marker moves further than maxdisp cells
     # physical parameters
     g_y = 9.81                                  # earth gravity, m/s^2
@@ -19,9 +30,9 @@ default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)#,ma
     plume_r = 20000                             # plume radius
     air_height = 0.2*ly                         # height of the 'sticky air' layer on top
     # discretization parameters
-    Nx, Ny = 35, 45                             # number of grid points
-    RANDOMIZE_MARKER_POSITIONS = true           # add random perturbation to initial marker coords
     marker_density = 5                          # use this amount of markers per grid step per dimension
+    # random numbers for initial marker postions
+    Random.seed!(42)                            # seed default RNG for random marker positions. TODO multi-xPU: should be dependent on rank, or do not seed?
 
     # derived quantities
     dx, dy = lx/(Nx-1), ly/(Ny-1)               # grid resolution
@@ -73,17 +84,21 @@ default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)#,ma
     @assert size(ρ_vy) == size(Vy)
 
     # --- INITIAL CONDITIONS ---
-    setInitialMarkerCoords!(xy_m, Nmx, Nmy, x, y, RANDOMIZE_MARKER_POSITIONS::Bool)
+    setInitialMarkerCoords!(xy_m, Nmx, Nmy, x, y, RAND_MARKER_POS::Bool)
     setInitialMarkerProperties!(xy_m, ρ_m, μ_m, Nm, μ_air, μ_matrix, μ_plume, ρ_air, ρ_matrix, ρ_plume, plume_x, plume_y, plume_r, air_height)
-    vline(x)
-    hline!(y)
-    display(scatter!(xy_m[:,1],xy_m[:,2],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false,markersize=3,markerstrokewidth=0))
+    if do_plot
+        vline(x)
+        hline!(y)
+        display(scatter!(xy_m[:,1],xy_m[:,2],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false,markersize=3,markerstrokewidth=0))
+    end
 
     # --- TIMESTEPPING ---
     dt = 0.0
     t_tot = 0.0
     for t=1:nt
-        @show t, t_tot
+        if print_info
+            @show t, t_tot
+        end
 
         # interpolate material properties to grid
         bilinearMarkerToGrid!(x_vy,y_vy,ρ_vy,xy_m,ρ_m,dx,dy)
@@ -94,10 +109,13 @@ default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)#,ma
         dt = solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
                 τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
                 g_y, dx, dy, Nx, Ny,
-                dt, maxdisp; use_free_surface_stabilization=true)
+                dt, maxdisp; use_free_surface_stabilization=true,
+                print_info=print_info)
 
         # plot current state
-        showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p, xy_m,ρ_m, lx,ly)
+        if do_plot
+            showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p, xy_m,ρ_m, lx,ly)
+        end
 
         # move markers
         @assert dt ≈ maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
@@ -107,7 +125,7 @@ default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)#,ma
     end
 
 
-    return nothing
+    return Array(Vx)
 end
 
 
@@ -339,7 +357,7 @@ Sets initial coordinates and properties of the markers
 x, y are coordinates of the basic grid nodes
 xlims, ylims contain domain lower and upper limits at indices [1] and [end], respectively
 """
-@views function setInitialMarkerCoords!(xy_m, Nmx, Nmy, xlims, ylims, RANDOMIZE_MARKER_POSITIONS::Bool)
+@views function setInitialMarkerCoords!(xy_m, Nmx, Nmy, xlims, ylims, RAND_MARKER_POS::Bool; rng=Random.GLOBAL_RNG)
     Nm = Nmx*Nmy
     @assert size(xy_m) == (Nm,2)
     dxm = (xlims[end]-xlims[1]) / Nmx
@@ -354,10 +372,10 @@ xlims, ylims contain domain lower and upper limits at indices [1] and [end], res
             m += 1
         end
     end
-    if RANDOMIZE_MARKER_POSITIONS
+    if RAND_MARKER_POS
         # TODO: maybe add seed and specify rng
-        xy_m[:,1] .+= (rand(Nm).-0.5).*dxm
-        xy_m[:,2] .+= (rand(Nm).-0.5).*dym
+        xy_m[:,1] .+= (rand(rng,Nm).-0.5).*dxm
+        xy_m[:,2] .+= (rand(rng,Nm).-0.5).*dym
     end
     return nothing
 end
@@ -389,3 +407,14 @@ end
 
 
 StokesFlow2D()
+
+
+@testset "StokesFlow2D_cpu" begin
+    nt=10
+    nx,ny=35,45
+    # tests should not depend on a rng seed, see the Warning at https://docs.julialang.org/en/v1/stdlib/Random/
+    result = StokesFlow2D(;nt=nt,Nx=nx,Ny=ny,RAND_MARKER_POS=false,do_plot=false,print_info=false)
+    inds = [181, 219, 388, 444, 637, 920, 1049, 1074, 1223, 1367]
+    refs = [5.16167425967578e-10, -4.448226006752059e-10, -1.5042959025661068e-9, 4.969181007693054e-9, -1.466557924043276e-9, 2.1178605832979315e-9, -3.027897978585612e-10, -2.0912258038281033e-9, -5.849238321416495e-10, 2.5293112415907947e-10]
+    @test all(refs .≈ result[inds])
+end
