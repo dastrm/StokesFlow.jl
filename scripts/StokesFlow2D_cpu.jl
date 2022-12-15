@@ -11,7 +11,7 @@ default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)
 
 """
 Input args:
-nt              : number of timesteps
+Nt              : number of timesteps
 Nx, Ny          : number of grid points
 RAND_MARKER_POS : whether to add random perturbation to initial marker coords
 do_plot         : whether to create Plots
@@ -19,7 +19,7 @@ print_info      : whether any info is printed to console
 
 Output: Currently just Vy, an array of size (Nx, Ny+1)
 """
-@views function StokesFlow2D(;nt=20, Nx=35, Ny=45, RAND_MARKER_POS::Bool=true, do_plot::Bool=true, print_info::Bool=true)
+@views function StokesFlow2D(;Nt=20, Nx=35, Ny=45, RAND_MARKER_POS::Bool=true, do_plot::Bool=true, print_info::Bool=true)
 
     # --- PARAMETERS ---
     # time
@@ -45,31 +45,31 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
     # --- ARRAYS ---
     # marker array allocations
-    xy_m       = zeros(Nm,2)                    # marker coords, TODO: maybe better 2 arrays? or dimensions (2,Nm)? or array of structs?
-    ρ_m        = zeros(Nm)                      # marker property: density
-    μ_m        = zeros(Nm)                      # marker property: viscosity
+    xy_m = @zeros(2,Nm)                          # marker coords
+    ρ_m  = @zeros(Nm)                            # marker property: density
+    μ_m  = @zeros(Nm)                            # marker property: viscosity
 
     # grid array allocations
     # maybe Vx & Vy sizes need adjustments for marker interpolation (multi-GPU case, simplify single GPU). TODO
-    P    = zeros(Nx-1,Ny-1)
-    Vx   = zeros(Nx  ,Ny+1)
-    Vy   = zeros(Nx+1,Ny  )
-    ρ_vy = zeros(Nx+1,Ny  )
-    μ_b  = zeros(Nx  ,Ny  ) # μ on basic nodes
-    μ_p  = zeros(Nx-1,Ny-1) # μ on pressure nodes
+    P    = @zeros(Nx-1,Ny-1)
+    Vx   = @zeros(Nx  ,Ny+1)
+    Vy   = @zeros(Nx+1,Ny  )
+    ρ_vy = @zeros(Nx+1,Ny  )
+    μ_b  = @zeros(Nx  ,Ny  ) # μ on basic nodes
+    μ_p  = @zeros(Nx-1,Ny-1) # μ on pressure nodes
 
     # additional arrays for Stokes Solver
-    τxx   = zeros(Nx-1,Ny-1)
-    τyy   = zeros(Nx-1,Ny-1)
-    τxy   = zeros(Nx  ,Ny  )
-    ∇V    = zeros(Nx-1,Ny-1)
-    dτPt  = zeros(Nx-1,Ny-1)
-    Rx    = zeros(Nx-2,Ny-1)
-    Ry    = zeros(Nx-1,Ny-2)
-    dVxdτ = zeros(Nx-2,Ny-1)
-    dVydτ = zeros(Nx-1,Ny-2)
-    dτVx  = zeros(Nx-2,Ny-1)
-    dτVy  = zeros(Nx-1,Ny-2)
+    τxx   = @zeros(Nx-1,Ny-1)
+    τyy   = @zeros(Nx-1,Ny-1)
+    τxy   = @zeros(Nx  ,Ny  )
+    ∇V    = @zeros(Nx-1,Ny-1)
+    dτPt  = @zeros(Nx-1,Ny-1)
+    Rx    = @zeros(Nx-2,Ny-1)
+    Ry    = @zeros(Nx-1,Ny-2)
+    dVxdτ = @zeros(Nx-2,Ny-1)
+    dVydτ = @zeros(Nx-1,Ny-2)
+    dτVx  = @zeros(Nx-2,Ny-1)
+    dτVy  = @zeros(Nx-1,Ny-2)
 
     # coordinates for all grid points
     x    = [(ix-1)*dx       for ix=1:Nx  ] # basic nodes
@@ -84,7 +84,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     @assert size(x_p ,1) == size(P ,1) && size(y_p ,1) == size(P ,2)
     @assert size(x_vx,1) == size(Vx,1) && size(y_vx,1) == size(Vx,2)
     @assert size(x_vy,1) == size(Vy,1) && size(y_vy,1) == size(Vy,2)
-    @assert size(ρ_vy) == size(Vy)
+    @assert size(ρ_vy)   == size(Vy)
 
     # --- INITIAL CONDITIONS ---
     setInitialMarkerCoords!(xy_m, Nmx, Nmy, x, y, RAND_MARKER_POS::Bool)
@@ -92,13 +92,13 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     if do_plot
         vline(x)
         hline!(y)
-        display(scatter!(xy_m[:,1],xy_m[:,2],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false,markersize=3,markerstrokewidth=0))
+        display(scatter!(xy_m[1,:],xy_m[2,:],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false,markersize=3,markerstrokewidth=0))
     end
 
     # --- TIMESTEPPING ---
     dt = 0.0
     t_tot = 0.0
-    for t=1:nt
+    for t=1:Nt
         if print_info
             @show t, t_tot
         end
@@ -122,7 +122,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
         # move markers
         @assert dt ≈ maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
-        @parallel (1:Nm) moveMarkersRK4!(xy_m,Nm,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
+        @parallel (1:Nm) moveMarkersRK4!(xy_m,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
 
         t_tot += dt
     end
@@ -210,15 +210,15 @@ end
 end
 
 
-@parallel_indices (m) function moveMarkersRK4!(xy_m,Nm,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
+@parallel_indices (m) function moveMarkersRK4!(xy_m,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
 
     # Runge-Kutta 4th order
     rk4_dt = [0.0, 0.5, 0.5, 1.0] * dt;
     rk4_wt = [1, 2, 2, 1];
     rk4_wt = rk4_wt/sum(rk4_wt);
 
-    x_old = xy_m[m,1] # old position
-    y_old = xy_m[m,2]
+    x_old = xy_m[1,m] # old position
+    y_old = xy_m[2,m]
     vx_eff, vy_eff = 0.0, 0.0 # 'effective' velocity for explicit update: x_new = x_old + v_eff*dt
     vx_rk , vy_rk  = 0.0, 0.0 # velocity at previous/current point
 
@@ -246,8 +246,8 @@ end
     y_new = min(max(y_new,0),ly)
 
     # write back updated positions
-    xy_m[m,1] = x_new
-    xy_m[m,2] = y_new
+    xy_m[1,m] = x_new
+    xy_m[2,m] = y_new
 
     return nothing
 end
@@ -258,7 +258,7 @@ function showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p,xy_m,
     #p1 = heatmap(x_vy ,  y_vy, Array(ρ_vy)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="ρ_vy")
     p2 = heatmap(x     ,  y   , Array(μ_b )' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="μ_b" )
     #p3 = heatmap(x_p  ,  y_p , Array(μ_p )' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="μ_p" )
-    #p4 = scatter(xy_m[:,1],xy_m[:,2],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false,markersize=3,markerstrokewidth=0)
+    #p4 = scatter(xy_m[1,:],xy_m[2,:],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false,markersize=3,markerstrokewidth=0)
 
     p5 = heatmap(x_p ,  y_p, Array(P)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Pressure")
     p6 = heatmap(x_vx, y_vx, Array(Vx)', yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Vx")
@@ -287,13 +287,13 @@ end
 
 @views function bilinearMarkerToGrid!(x_grid,y_grid,val_grid,xy_m,val_m,dx,dy)
     Nx,Ny = size(val_grid)
-    Nm = size(xy_m,1)
+    Nm = size(xy_m,2)
     val_wt_sum = zeros(Nx,Ny)
     wt_sum = zeros(Nx,Ny)
 
     for m=1:1:Nm
 
-        xm,ym = xy_m[m,:]
+        xm,ym = xy_m[:,m]
 
         # get indices and relative distance to top left node w.r.t marker m.
         # may be 0, when the marker is further left or up than the first grid node
@@ -357,7 +357,7 @@ xlims, ylims contain domain lower and upper limits at indices [1] and [end], res
 """
 @views function setInitialMarkerCoords!(xy_m, Nmx, Nmy, xlims, ylims, RAND_MARKER_POS::Bool; rng=Random.GLOBAL_RNG)
     Nm = Nmx*Nmy
-    @assert size(xy_m) == (Nm,2)
+    @assert size(xy_m) == (2,Nm)
     dxm = (xlims[end]-xlims[1]) / Nmx
     dym = (ylims[end]-ylims[1]) / Nmy
     xcoords = LinRange(xlims[1]+0.5dxm,xlims[end]-0.5dxm,Nmx)
@@ -365,15 +365,14 @@ xlims, ylims contain domain lower and upper limits at indices [1] and [end], res
     m = 1
     for ix=1:Nmx
         for iy=1:Nmy
-            xy_m[m,1] = xcoords[ix]
-            xy_m[m,2] = ycoords[iy]
+            xy_m[1,m] = xcoords[ix]
+            xy_m[2,m] = ycoords[iy]
             m += 1
         end
     end
     if RAND_MARKER_POS
-        # TODO: maybe add seed and specify rng
-        xy_m[:,1] .+= (rand(rng,Nm).-0.5).*dxm
-        xy_m[:,2] .+= (rand(rng,Nm).-0.5).*dym
+        xy_m[1,:] .+= (rand(rng,Nm).-0.5).*dxm
+        xy_m[2,:] .+= (rand(rng,Nm).-0.5).*dym
     end
     return nothing
 end
@@ -385,10 +384,10 @@ Sets initial marker properties ρ_m and μ_m according to whether their coordina
 3. the surrounding matrix
 """
 @views function setInitialMarkerProperties!(xy_m, ρ_m, μ_m, Nm, μ_air, μ_matrix, μ_plume, ρ_air, ρ_matrix, ρ_plume, plume_x, plume_y, plume_r, air_height)
-    @assert size(xy_m) == (Nm,2)
+    @assert size(xy_m) == (2,Nm)
     @assert size(ρ_m) == size(μ_m) && size(μ_m,1) == Nm
     for m=1:Nm
-        x,y = xy_m[m,:]
+        x,y = xy_m[:,m]
         if y < air_height
             ρ_m[m] = ρ_air
             μ_m[m] = μ_air
@@ -408,11 +407,11 @@ StokesFlow2D()
 
 
 @testset "StokesFlow2D_cpu" begin
-    nt=10
-    nx,ny=35,45
+    nt    = 10
+    nx,ny = 35,45
     # tests should not depend on a rng seed, see the Warning at https://docs.julialang.org/en/v1/stdlib/Random/
-    result = StokesFlow2D(;nt=nt,Nx=nx,Ny=ny,RAND_MARKER_POS=false,do_plot=false,print_info=false)
-    inds = [181, 219, 388, 444, 637, 920, 1049, 1074, 1223, 1367]
-    refs = [5.16167425967578e-10, -4.448226006752059e-10, -1.5042959025661068e-9, 4.969181007693054e-9, -1.466557924043276e-9, 2.1178605832979315e-9, -3.027897978585612e-10, -2.0912258038281033e-9, -5.849238321416495e-10, 2.5293112415907947e-10]
+    result = StokesFlow2D(;Nt=nt,Nx=nx,Ny=ny,RAND_MARKER_POS=false,do_plot=false,print_info=false)
+    inds   = [181, 219, 388, 444, 637, 920, 1049, 1074, 1223, 1367]
+    refs   = [5.16167425967578e-10, -4.448226006752059e-10, -1.5042959025661068e-9, 4.969181007693054e-9, -1.466557924043276e-9, 2.1178605832979315e-9, -3.027897978585612e-10, -2.0912258038281033e-9, -5.849238321416495e-10, 2.5293112415907947e-10]
     @test all(refs .≈ result[inds])
 end
