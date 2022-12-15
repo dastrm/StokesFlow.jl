@@ -1,8 +1,11 @@
-const USE_GPU = false
+using ParallelStencil
+using ParallelStencil.FiniteDifferences2D
+@init_parallel_stencil(Threads, Float64, 2)
+include("StokesSolver.jl")
+
 using Plots,Plots.Measures
 using Test
 import Random
-include("StokesSolver.jl")
 
 default(size=(1200,1000),framestyle=:box,label=false,grid=false,margin=10mm)
 
@@ -119,7 +122,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
         # move markers
         @assert dt ≈ maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
-        moveMarkersRK4!(xy_m,Nm,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
+        @parallel (1:Nm) moveMarkersRK4!(xy_m,Nm,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
 
         t_tot += dt
     end
@@ -207,49 +210,45 @@ end
 end
 
 
-@views function moveMarkersRK4!(xy_m,Nm,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
+@parallel_indices (m) function moveMarkersRK4!(xy_m,Nm,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dt,lx,ly,dx,dy)
 
     # Runge-Kutta 4th order
     rk4_dt = [0.0, 0.5, 0.5, 1.0] * dt;
     rk4_wt = [1, 2, 2, 1];
     rk4_wt = rk4_wt/sum(rk4_wt);
 
-    for m=1:Nm # move every particle separately => nice for parallelizing
+    x_old = xy_m[m,1] # old position
+    y_old = xy_m[m,2]
+    vx_eff, vy_eff = 0.0, 0.0 # 'effective' velocity for explicit update: x_new = x_old + v_eff*dt
+    vx_rk , vy_rk  = 0.0, 0.0 # velocity at previous/current point
 
-        x_old = xy_m[m,1] # old position
-        y_old = xy_m[m,2]
-        vx_eff, vy_eff = 0.0, 0.0 # 'effective' velocity for explicit update: x_new = x_old + v_eff*dt
-        vx_rk , vy_rk  = 0.0, 0.0 # velocity at previous/current point
+    for it=eachindex(rk4_wt) # loop over points A-D
+        it
+        # position of current point based on previous point velocities
+        x_rk = x_old + rk4_dt[it]*vx_rk
+        y_rk = y_old + rk4_dt[it]*vy_rk
 
-        for it=eachindex(rk4_wt) # loop over points A-D
-            it
-            # position of current point based on previous point velocities
-            x_rk = x_old + rk4_dt[it]*vx_rk
-            y_rk = y_old + rk4_dt[it]*vy_rk
+        # interpolate velocity to current point
+        vx_rk, vy_rk = interpolateV(x_rk,y_rk,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dx,dy)
 
-            # interpolate velocity to current point
-            vx_rk, vy_rk = interpolateV(x_rk,y_rk,Vx,Vy,x_vx,y_vx,x_vy,y_vy,dx,dy)
-
-            # apply RK4 scheme: add up weighted velocities
-            vx_eff += rk4_wt[it]*vx_rk
-            vy_eff += rk4_wt[it]*vy_rk
-        end
-
-        # move particle
-        x_new = x_old + vx_eff*dt
-        y_new = y_old + vy_eff*dt
-
-        # explicitly restrict particles to stay on domain
-        # (optional, does not really change anything if BC correctly implemented and dt small enough)
-        # !! CHANGE, if global domain is not 0-lx and 0-ly !!
-        x_new = min(max(x_new,0),lx)
-        y_new = min(max(y_new,0),ly)
-
-        # write back updated positions
-        xy_m[m,1] = x_new
-        xy_m[m,2] = y_new
-
+        # apply RK4 scheme: add up weighted velocities
+        vx_eff += rk4_wt[it]*vx_rk
+        vy_eff += rk4_wt[it]*vy_rk
     end
+
+    # move particle
+    x_new = x_old + vx_eff*dt
+    y_new = y_old + vy_eff*dt
+
+    # explicitly restrict particles to stay on domain
+    # (optional, does not really change anything if BC correctly implemented and dt small enough)
+    # !! CHANGE, if global domain is not 0-lx and 0-ly !!
+    x_new = min(max(x_new,0),lx)
+    y_new = min(max(y_new,0),ly)
+
+    # write back updated positions
+    xy_m[m,1] = x_new
+    xy_m[m,2] = y_new
 
     return nothing
 end

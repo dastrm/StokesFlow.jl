@@ -1,14 +1,6 @@
-if !@isdefined(USE_GPU)
-    const USE_GPU = true
-end
-using ParallelStencil
-using ParallelStencil.FiniteDifferences2D
-@static if USE_GPU
-    @init_parallel_stencil(CUDA, Float64, 2)
-else
-    @init_parallel_stencil(Threads, Float64, 2)
-end
-using Plots, Printf, Statistics
+# ParallelStencil must already be initalized !!!
+
+using Printf, Statistics
 
 # ADDITIONAL PARALLEL STENCIL MACROS, needed for free surface stabilization
 import ..ParallelStencil: INDICES
