@@ -223,7 +223,6 @@ end
     vx_rk , vy_rk  = 0.0, 0.0 # velocity at previous/current point
 
     for it=eachindex(rk4_wt) # loop over points A-D
-        it
         # position of current point based on previous point velocities
         x_rk = x_old + rk4_dt[it]*vx_rk
         y_rk = y_old + rk4_dt[it]*vy_rk
