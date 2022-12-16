@@ -107,6 +107,8 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     μ_m  = Data.Array(μ_m)
 
     # --- TIMESTEPPING ---
+    times = zeros(3)
+
     dt = 0.0
     t_tot = 0.0
     for t=1:Nt
@@ -115,17 +117,21 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
         end
 
         # interpolate material properties to grid
-        # TODO implement fast GPU version
-        bilinearMarkerToGrid!(x_vy[1],y_vy[1],ρ_vy,xy_m,ρ_m,dx,dy, val_wt_sum,wt_sum)
-        bilinearMarkerToGrid!(x[1]   ,y[1]   ,μ_b ,xy_m,μ_m,dx,dy, val_wt_sum,wt_sum)
-        bilinearMarkerToGrid!(x_p[1] ,y_p[1] ,μ_p ,xy_m,μ_m,dx,dy, val_wt_sum,wt_sum)
+        t1 = @elapsed begin
+            bilinearMarkerToGrid!(x_vy[1],y_vy[1],ρ_vy,xy_m,ρ_m,dx,dy, val_wt_sum,wt_sum)
+            bilinearMarkerToGrid!(x[1]   ,y[1]   ,μ_b ,xy_m,μ_m,dx,dy, val_wt_sum,wt_sum)
+            bilinearMarkerToGrid!(x_p[1] ,y_p[1] ,μ_p ,xy_m,μ_m,dx,dy, val_wt_sum,wt_sum)
+        end
 
         # calculate velocities on grid
-        dt = solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
-                τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
-                g_y, dx, dy, Nx, Ny,
-                dt, maxdisp; use_free_surface_stabilization=true,
-                print_info=print_info)
+        t2 = @elapsed begin
+            dt = solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
+                    τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
+                    g_y, dx, dy, Nx, Ny,
+                    dt, maxdisp; use_free_surface_stabilization=true,
+                    #ϵ=0.001,
+                    print_info=print_info)
+        end
 
         # plot current state
         if do_plot
@@ -134,12 +140,28 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
         end
 
         # move markers
-        @assert dt ≈ maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
-        @parallel (1:Nm) moveMarkersRK4!(xy_m,Vx,Vy,x_vx[1],y_vx[1],x_vy[1],y_vy[1],dt,lx,ly,dx,dy)
+        #@assert dt ≈ maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
+        t3 = @elapsed begin
+            @parallel (1:Nm) moveMarkersRK4!(xy_m,Vx,Vy,x_vx[1],y_vx[1],x_vy[1],y_vy[1],dt,lx,ly,dx,dy)
+        end
+
+        if t > 2
+            times[1] += t1
+            times[2] += t2
+            times[3] += t3
+        end
 
         t_tot += dt
     end
 
+    timesum = sum(times)
+    times .= times ./ timesum .* 100
+    if print_info
+        println("\nTime Summary: Total ", timesum, " seconds\n",
+                "  MarkerToGrid: ", times[1], " %\n",
+                "  StokesSolver: ", times[2], " %\n",
+                "  MoveMarkers : ", times[3], " %\n")
+    end
 
     return Array(Vx)
 end
@@ -297,33 +319,6 @@ function topleftIndexRelDist(x_grid_min, y_grid_min, x, y, dx, dy)
 end
 
 @views function bilinearMarkerToGrid!(x_grid_min,y_grid_min,val_grid,xy_m,val_m,dx,dy, val_wt_sum,wt_sum)
-    #=
-        # Currently, a naive version without cell-lists is implemented:
-        1.) each thread gets a particle, computes its weights and contribution to each of the four nodes
-        2.) perform atomic add on two global nodal arrays: sum(weights) and sum(weights*particleValue)
-        3.) do division: val_grid = sum(weights*particleValue) / sum(weights) 
-
-        TODO:
-        1.) build cell list according to x_grid_min, y_grid_min, dx and dy
-        2.) set global arrays for sum(weights) and sum(weights*particleValue) to zero
-        3.) assign a warp to each cell. each thread does:
-            - loop over "his" particles in a warp. should be mostly 1, sometimes 0 or >1 (with ~25 particles/cell)
-            - inside this loop:
-                1. load particle position
-                2. compute weights dxmij, dymij
-                3. add up weights and weights*particleValue for the particles
-            - after the loop: do warp-level reduction (sum) of 1. weights and 2. weights*particleValue for each of the four nodes
-        4.) then, use shared memory for reduction over warps in each block:
-                - calculate sum(weights) and sum(weights*particleValue) for each node,
-                - then add this atomically to global arrays (to sync with other blocks on nodes located on the block boundaries)
-        5.) launch a separate kernel for the division sum(weights*particleValue)/sum(weights) for each nodes
-
-        Possible Variations:
-        1.) have a global array that has 8 entries per node; for sum(weights) and sum(weights*particleValue) for each of the 4 cells next to the node
-            => instead of using shared memory and using an atomic add, each warp just writes its 8 values to the global array
-            This should be easier and might even be faster (avoid atomic add) ???
-        2.) use one thread per cell: loop over all particles in a cell
-    =#
 
     Nx,Ny = size(val_grid)
     Nm = size(xy_m,2)
