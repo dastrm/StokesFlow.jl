@@ -1,6 +1,7 @@
 using ParallelStencil
 using ParallelStencil.FiniteDifferences2D
 using StaticArrays
+import CUDA
 @init_parallel_stencil(CUDA, Float64, 2)
 include("StokesSolver.jl")
 
@@ -72,6 +73,11 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     dτVx  = @zeros(Nx-2,Ny-1)
     dτVy  = @zeros(Nx-1,Ny-2)
 
+    # additional arrays for marker -> grid interpolation
+    interp_size = max.(size(ρ_vy),size(μ_b),size(μ_p)) # these represent the arrays that are filled by interpolation
+    val_wt_sum = @zeros(interp_size)
+    wt_sum = @zeros(interp_size)
+
     # coordinates for all grid points
     x    = [(ix-1)*dx       for ix=1:Nx  ] # basic nodes
     y    = [(iy-1)*dy       for iy=1:Ny  ]
@@ -109,10 +115,10 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
         end
 
         # interpolate material properties to grid
-        # TODO implement proper GPU version
-        CUDA.@allowscalar bilinearMarkerToGrid!(x_vy,y_vy,ρ_vy,xy_m,ρ_m,dx,dy)
-        CUDA.@allowscalar bilinearMarkerToGrid!(x   ,y   ,μ_b ,xy_m,μ_m,dx,dy)
-        CUDA.@allowscalar bilinearMarkerToGrid!(x_p ,y_p ,μ_p ,xy_m,μ_m,dx,dy)
+        # TODO implement fast GPU version
+        bilinearMarkerToGrid!(x_vy[1],y_vy[1],ρ_vy,xy_m,ρ_m,dx,dy, val_wt_sum,wt_sum)
+        bilinearMarkerToGrid!(x[1]   ,y[1]   ,μ_b ,xy_m,μ_m,dx,dy, val_wt_sum,wt_sum)
+        bilinearMarkerToGrid!(x_p[1] ,y_p[1] ,μ_p ,xy_m,μ_m,dx,dy, val_wt_sum,wt_sum)
 
         # calculate velocities on grid
         dt = solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
@@ -124,6 +130,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
         # plot current state
         if do_plot
             showPlot(x,y,x_p,y_p,x_vx,y_vx,x_vy,y_vy, P,Vx,Vy,ρ_vy,μ_b,μ_p, xy_m,ρ_m, lx,ly)
+            #display(scatter(Array(xy_m)[1,:],Array(xy_m)[2,:],color=Int.(round.(Array(ρ_m))),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false,markersize=3,markerstrokewidth=0))
         end
 
         # move markers
@@ -238,7 +245,7 @@ end
         vx_eff += rk4_wt[it]*vx_rk
         vy_eff += rk4_wt[it]*vy_rk
     end
-#
+
     # move particle
     x_new = x_old + vx_eff*dt
     y_new = y_old + vy_eff*dt
@@ -289,70 +296,105 @@ function topleftIndexRelDist(x_grid_min, y_grid_min, x, y, dx, dy)
     return ix,iy,dxij,dyij
 end
 
-@views function bilinearMarkerToGrid!(x_grid,y_grid,val_grid,xy_m,val_m,dx,dy)
+@views function bilinearMarkerToGrid!(x_grid_min,y_grid_min,val_grid,xy_m,val_m,dx,dy, val_wt_sum,wt_sum)
+    #=
+        # Currently, a naive version without cell-lists is implemented:
+        1.) each thread gets a particle, computes its weights and contribution to each of the four nodes
+        2.) perform atomic add on two global nodal arrays: sum(weights) and sum(weights*particleValue)
+        3.) do division: val_grid = sum(weights*particleValue) / sum(weights) 
+
+        TODO:
+        1.) build cell list according to x_grid_min, y_grid_min, dx and dy
+        2.) set global arrays for sum(weights) and sum(weights*particleValue) to zero
+        3.) assign a warp to each cell. each thread does:
+            - loop over "his" particles in a warp. should be mostly 1, sometimes 0 or >1 (with ~25 particles/cell)
+            - inside this loop:
+                1. load particle position
+                2. compute weights dxmij, dymij
+                3. add up weights and weights*particleValue for the particles
+            - after the loop: do warp-level reduction (sum) of 1. weights and 2. weights*particleValue for each of the four nodes
+        4.) then, use shared memory for reduction over warps in each block:
+                - calculate sum(weights) and sum(weights*particleValue) for each node,
+                - then add this atomically to global arrays (to sync with other blocks on nodes located on the block boundaries)
+        5.) launch a separate kernel for the division sum(weights*particleValue)/sum(weights) for each nodes
+
+        Possible Variations:
+        1.) have a global array that has 8 entries per node; for sum(weights) and sum(weights*particleValue) for each of the 4 cells next to the node
+            => instead of using shared memory and using an atomic add, each warp just writes its 8 values to the global array
+            This should be easier and might even be faster (avoid atomic add) ???
+        2.) use one thread per cell: loop over all particles in a cell
+    =#
+
     Nx,Ny = size(val_grid)
     Nm = size(xy_m,2)
-    val_wt_sum = zeros(Nx,Ny)
-    wt_sum = zeros(Nx,Ny)
 
-    for m=1:1:Nm
+    val_wt_sum .= 0.0
+    wt_sum     .= 0.0
 
-        xm,ym = xy_m[:,m]
+    # interpolate by summing up the marker contributions to global arrays
+    @parallel (1:Nm) atomicAddInterpolation(xy_m,val_m,wt_sum,val_wt_sum,Nx,Ny,x_grid_min,y_grid_min,dx,dy)
 
-        # get indices and relative distance to top left node w.r.t marker m.
-        # may be 0, when the marker is further left or up than the first grid node
-        ix,iy,dxmij,dymij = topleftIndexRelDist(x_grid[1],y_grid[1],xm,ym,dx,dy)
-        @assert ix>=0 && ix<=Nx && iy>=0 && iy<=Ny
-        tol=1e-14
-        @assert dxmij>=0-tol && dxmij<=1+tol && dymij>=0-tol && dymij<=1+tol
+    # finally compute actual value from the sums
+    @parallel (1:Nx,1:Ny) safeDivision(val_grid, Data.Array(val_wt_sum), Data.Array(wt_sum))
+
+    return nothing
+end
+
+@parallel_indices (m) function atomicAddInterpolation(xy_m,val_m,wt_sum,val_wt_sum,Nx,Ny,x_grid_min,y_grid_min,dx,dy)
+    xm = xy_m[1,m]
+    ym = xy_m[2,m]
+    val = val_m[m]
+
+    # get indices and relative distance to top left node w.r.t marker m.
+    # may be 0, when the marker is further left or up than the first grid node
+    ix,iy,dxmij,dymij = topleftIndexRelDist(x_grid_min,y_grid_min,xm,ym,dx,dy)
+    if !(ix>=0 && ix<=Nx && iy>=0 && iy<=Ny)
+        @ps_println("ATTENTION: erroneous marker position")
+    else
 
         # sum up weights, if the respective node exists
         if iy>0
             if ix>0
                 # 1) top left
                 w = (1-dxmij)*(1-dymij)
-                wt_sum[ix,iy] = wt_sum[ix,iy] + w
-                val_wt_sum[ix,iy] = val_wt_sum[ix,iy] + w*val_m[m]
+                CUDA.@atomic wt_sum[ix,iy] += w
+                CUDA.@atomic val_wt_sum[ix,iy] += w*val
             end
             if ix<Nx
                 # 2) top right
                 w = dxmij*(1-dymij)
-                wt_sum[ix+1,iy] = wt_sum[ix+1,iy] + w
-                val_wt_sum[ix+1,iy] = val_wt_sum[ix+1,iy] + w*val_m[m]
+                CUDA.@atomic wt_sum[ix+1,iy] += w
+                CUDA.@atomic val_wt_sum[ix+1,iy] += w*val
             end
         end
         if iy<Ny
             if ix>0
                 # 3) bottom left
                 w = (1-dxmij)*dymij
-                wt_sum[ix,iy+1] = wt_sum[ix,iy+1] + w
-                val_wt_sum[ix,iy+1] = val_wt_sum[ix,iy+1] + w*val_m[m]
+                CUDA.@atomic wt_sum[ix,iy+1] += w
+                CUDA.@atomic val_wt_sum[ix,iy+1] += w*val
             end
             if ix<Nx
                 # 4) bottom right
                 w = dxmij*dymij
-                wt_sum[ix+1,iy+1] = wt_sum[ix+1,iy+1] + w
-                val_wt_sum[ix+1,iy+1] = val_wt_sum[ix+1,iy+1] + w*val_m[m]
+                CUDA.@atomic wt_sum[ix+1,iy+1] += w
+                CUDA.@atomic val_wt_sum[ix+1,iy+1] += w*val
             end
         end
     end
 
-    # finally compute actual value from the sums
-    for ix = 1:Nx
-        for iy = 1:Ny
-            if wt_sum[ix,iy] > 0.0
-                val_grid[ix,iy] = val_wt_sum[ix,iy] / wt_sum[ix,iy];
-            else
-                # This happens if no markers are close enough, which should
-                # be avoided. do not update in this case
-                print("PROBLEM: no markers close enough for value interpolation:")
-                @show ix, iy, Nx, Ny
-            end
-        end
-    end
     return nothing
 end
 
+@parallel_indices (ix,iy) function safeDivision(result,numerator,denominator)
+    denom = denominator[ix,iy]
+    if denom != 0.0
+        result[ix,iy] = numerator[ix,iy] / denom
+    else
+        @ps_println("PROBLEM: no markers close enough for value interpolation at node: ix = ", ix, ", iy = ", iy)
+    end
+    return nothing
+end
 
 """
 Sets initial coordinates and properties of the markers
