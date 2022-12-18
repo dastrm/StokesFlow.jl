@@ -1,30 +1,36 @@
 #=
-This script solves the 2D Stokes & Continuity equations for given arrays of μ, ρ.
+This script only differs from StokesSolver_prototype.jl in the following points:
 
-∂τxx/∂x + ∂τxy/∂y - ∂P/∂x = 0
-∂τyx/∂x + ∂τyy/∂y - ∂P/∂y = -ρ*g*y
-∂vx/∂x + ∂vy/∂y = 0
-τxx = 2μ*∂vx/∂x
-τyy = 2μ*∂vy/∂y
-τxy = τyx = μ*(∂vx/∂y + ∂vy/∂x)
+    * Vx is extended by 2 nodes in x-direction
+    * Vy is extended by 2 nodes in y-direction
+    * => computation does not even read these additional entries
 
-Additionally, dt is calculated as dt = maxdisp*min(dx/maximum(Vx),dy/maximum(Vy)),
-and for the rhs of the y-Stokes equation, the density field ρ is implicitly advected
-to the next timestep using Vx, Vy. ("Free surface stabilization")
+Motivation: These added entries are needed for velocity interpolation from markers
+            (coming from other ranks in case of multi-xPU,
+            set such that the second derivative is 0, in case of physical boundary)
 
-Otherwise, PT iterations are implemented similarly to the 2D minapp of ParallelStencil.jl
-https://github.com/omlins/ParallelStencil.jl/blob/main/miniapps/Stokes2D.jl
+However:    Memory layout is worse for the Stokes Solver.
+            This script shows ~5-10% slower performance.
+            Thus, it is probably better to add this additional padding after the Stokes Solver.
 =#
 
-#=
-What's still missing:
-- Performance (Kernel fusing, tuning relaxation parameters, ...)
-  see e.g. https://github.com/PTsolvers/PseudoTransientStokes.jl/blob/main/scripts/Stokes2D_ve_perf.jl
-=#
 
 const USE_GPU = true
 using ParallelStencil
 using ParallelStencil.FiniteDifferences2D
+
+macro within(macroname::String, A::Symbol)
+    if     macroname == "@all"    esc(  :($ix<=size($A,1)   && $iy<=size($A,2)  )  )
+    elseif macroname == "@inn"    esc(  :($ix<=size($A,1)-2 && $iy<=size($A,2)-2)  )
+    elseif macroname == "@inn_x"  esc(  :($ix<=size($A,1)-2 && $iy<=size($A,2)  )  )
+    elseif macroname == "@inn_y"  esc(  :($ix<=size($A,1)   && $iy<=size($A,2)-2)  )
+    elseif macroname == "@inn_innx"  esc(  :($ix<=size($A,1)-4 && $iy<=size($A,2)-2)  )
+    elseif macroname == "@inn_inny"  esc(  :($ix<=size($A,1)-2 && $iy<=size($A,2)-4)  )
+    # I can't get what's mentioned in the next line to work, thus the entire macro is just copied and extended as short-term workaround
+    else error("unkown macroname: $macroname. If you want to add your own assignement macros, overwrite the macro 'within(macroname::String, A::Symbol)'; to still use the exising macro within as well call ParallelStencil.FiniteDifferences{1|2|3}D.@within(macroname, A) at the end.")
+    end
+end
+
 @static if USE_GPU
     @init_parallel_stencil(CUDA, Float64, 2)
 else
@@ -32,16 +38,18 @@ else
 end
 using Plots, Printf, Statistics, Test
 
-# ADDITIONAL PARALLEL STENCIL MACROS, needed for free surface stabilization
+# ADDITIONAL PARALLEL STENCIL MACROS, needed for free surface stabilization and larger Vx / Vy array sizes
 import ..ParallelStencil: INDICES
 ix, iy = INDICES[1], INDICES[2]
 ixi, iyi = :($ix+1), :($iy+1)
-# average in both dimension, and inner elements in y. corresponds to @av(@inn_y(..))
-macro av_inn_y(A::Symbol)  esc(:(($A[$ix  ,$iyi ] + $A[$ix+1,$iyi ] + $A[$ix,$iyi+1] + $A[$ix+1,$iyi+1])*0.25 )) end
-# central finite differences in x, inner elements in y. corresponds to @d_xi(@av_x(..))
-macro   d_xi_2(A::Symbol)  esc(:( $A[$ix+2,$iyi ] - $A[$ix  ,$iyi] )) end
-# central finite differences in y, inner elements in x. corresponds to @d_yi(@av_y(..))
-macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
+
+macro    av_inn(A::Symbol)  esc(:(($A[$ixi  ,$iyi ] + $A[$ixi+1,$iyi ] + $A[$ixi,$iyi+1] + $A[$ixi+1,$iyi+1])*0.25 )) end # average in both dimension, and inner elements in both directions. corresponds to @av(@inn_x(@inn_y(..)))
+macro    d_xi_2(A::Symbol)  esc(:( $A[$ix+2, $iyi ] - $A[$ix  , $iyi] )) end # central finite differences in x, inner elements in y. corresponds to @d_xi(@av_x(..))
+macro    d_yi_2(A::Symbol)  esc(:( $A[$ixi  ,$iy+2] - $A[$ixi , $iy ] )) end # central finite differences in y, inner elements in x. corresponds to @d_yi(@av_y(..))
+macro     d_xii(A::Symbol)  esc(:( $A[$ixi+1,$iyi ] - $A[$ixi  ,$iyi] )) end # differences along inner elements in x, select inner elements in y
+macro     d_yii(A::Symbol)  esc(:( $A[$ixi ,$iyi+1] - $A[$ixi ,$iyi ] )) end # differences along inner elements in y, select inner elements in x
+macro  inn_innx(A::Symbol)  esc(:( $A[$ixi+1 ,$iyi] )) end # inner elements n x, twice inner elements in y
+macro  inn_inny(A::Symbol)  esc(:( $A[$ixi ,$iyi+1] )) end # inner elements n x, twice inner elements in y
 
 @views function Stokes2D()
     # Physics
@@ -66,8 +74,8 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     P    = @zeros(nx-1,ny-1)
     τxx  = @zeros(nx-1,ny-1) #p-nodes
     τyy  = @zeros(nx-1,ny-1) #p-nodes
-    Vx   = @zeros(nx  ,ny+1)
-    Vy   = @zeros(nx+1,ny  )
+    Vx   = @zeros(nx+2,ny+1)
+    Vy   = @zeros(nx+1,ny+2)
     τxy  = @zeros(nx  ,ny  )
 
     # coordinates for points
@@ -92,14 +100,14 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     ρ_vy  = Data.Array(ρ_vy)
     μ_τxy = Data.Array(μ_τxy)
     μ_p   = Data.Array(μ_p)
-
+#=
     # plot density & viscosity
     p1 = heatmap(x_p  ,y_p  ,Array(μ_p)'  ,yflip=true,title="Viscosity μ_p"  ,xlabel='x',ylabel='y',xlims=(0,lx),ylims=(0,ly),aspect_ratio=1)
     p2 = heatmap(x_τxy,y_τxy,Array(μ_τxy)',yflip=true,title="Viscosity μ_τxy",xlabel='x',ylabel='y',xlims=(0,lx),ylims=(0,ly),aspect_ratio=1)
     p3 = heatmap(x_vy ,y_vy ,Array(ρ_vy)' ,yflip=true,title="Density ρ_vy"   ,xlabel='x',ylabel='y',xlims=(0,lx),ylims=(0,ly),aspect_ratio=1)
-    display(plot(p1,p2,p3))
+    #display(plot(p1,p2,p3))
     #display(plot(p1)); display(plot(p2)); display(plot(p3))
-
+=#
 
     # more arrays
     ∇V        = @zeros(nx-1,ny-1)
@@ -152,7 +160,7 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
             mean_Rx = mean(abs.(Rx)); mean_Ry = mean(abs.(Ry)); mean_∇V = mean(abs.(∇V))
             err = maximum([mean_Rx, mean_Ry, mean_∇V])
             push!(err_evo1, err); push!(err_evo2,iter)
-            @printf("Total steps = %d, err = %1.3e [mean_Rx=%1.3e, mean_Ry=%1.3e, mean_∇V=%1.3e] \n", iter, err, mean_Rx, mean_Ry, mean_∇V)
+            #@printf("Total steps = %d, err = %1.3e [mean_Rx=%1.3e, mean_Ry=%1.3e, mean_∇V=%1.3e] \n", iter, err, mean_Rx, mean_Ry, mean_∇V)
         end
 
         iter+=1; niter+=1
@@ -163,7 +171,7 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     T_eff    = A_eff/t_it
     @printf("Total steps = %d, err = %1.3e, time = %1.3e sec (@ T_eff = %1.2f GB/s) \n", niter, err, t2-t1, round(T_eff, sigdigits=2))
 
-
+#=
     # Visualization
     p1 = heatmap(x_p ,  y_p, Array(P)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Pressure")
     p2 = heatmap(x_vy, y_vy, Array(Vy)', yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Vy")
@@ -171,7 +179,8 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     p5 = plot(err_evo2,err_evo1, legend=false, xlabel="# iterations", ylabel="log10(error)", linewidth=2, markershape=:circle, markersize=3, labels="max(error)", yaxis=:log10)
     p6 = heatmap(x_vx, y_vx, Array(Vx)', yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Vx")
     #display(plot(p1, p2, p4, p5))
-    display(plot(p1,p2,p5,p6))
+    #display(plot(p1,p2,p5,p6))
+=#
 
     return Array(Vx), Array(Vy)
 end
@@ -185,37 +194,39 @@ end
 end
 
 @parallel function compute_P!(∇V, Pt, Vx, Vy, dτPt, dx, dy)
-    @all(∇V)  = @d_xi(Vx)/dx + @d_yi(Vy)/dy
+    @all(∇V)  = @d_xii(Vx)/dx + @d_yii(Vy)/dy
     @all(Pt)  = @all(Pt) - @all(dτPt)*@all(∇V)
     return
 end
 
 @parallel function compute_τ!(∇V, τxx, τyy, τxy, Vx, Vy, μ_p, μ_τxy, dx, dy)
-    @all(τxx) = 2.0*@all(μ_p)*(@d_xi(Vx)/dx - 1.0/3.0*@all(∇V))
-    @all(τyy) = 2.0*@all(μ_p)*(@d_yi(Vy)/dy - 1.0/3.0*@all(∇V))
-    @all(τxy) = 2.0*@all(μ_τxy)*(0.5*(@d_ya(Vx)/dy + @d_xa(Vy)/dx))
+    @all(τxx) = 2.0*@all(μ_p)*(@d_xii(Vx)/dx - 1.0/3.0*@all(∇V))
+    @all(τyy) = 2.0*@all(μ_p)*(@d_yii(Vy)/dy - 1.0/3.0*@all(∇V))
+    @all(τxy) = 2.0*@all(μ_τxy)*(0.5*(@d_yi(Vx)/dy + @d_xi(Vy)/dx))
     return
 end
 
 @parallel function compute_dV!(Rx, Ry, dVxdτ, dVydτ, Pt, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, dx, dy, dt)
     @all(Rx)    = @d_xa(τxx)/dx + @d_yi(τxy)/dy - @d_xa(Pt)/dx
     @all(Ry)    = @d_ya(τyy)/dy + @d_xi(τxy)/dx - @d_ya(Pt)/dy + 
-                    g_y*(@inn(ρ_vy) - dt*(@av_inn_y(Vx)*@d_xi_2(ρ_vy)/(2*dx) + @inn(Vy)*@d_yi_2(ρ_vy)/(2*dy)))
+                    g_y*(@inn(ρ_vy) - dt*(@av_inn(Vx)*@d_xi_2(ρ_vy)/(2*dx) + @inn_inny(Vy)*@d_yi_2(ρ_vy)/(2*dy)))
     @all(dVxdτ) = dampX*@all(dVxdτ) + @all(Rx)
     @all(dVydτ) = dampY*@all(dVydτ) + @all(Ry)
     return
 end
 
 @parallel function compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
-    @inn(Vx) = @inn(Vx) + @all(dτVx)*@all(dVxdτ)
-    @inn(Vy) = @inn(Vy) + @all(dτVy)*@all(dVydτ)
+    @inn_innx(Vx) = @inn_innx(Vx) + @all(dτVx)*@all(dVxdτ)
+    @inn_inny(Vy) = @inn_inny(Vy) + @all(dτVy)*@all(dVydτ)
     return
 end
 
 # side boundaries
 @parallel_indices (iy) function bc_x_zero!(A::Data.Array)
-    A[1  , iy] = 0.0
-    A[end, iy] = 0.0
+    A[1    , iy] = 0.0 # actually not necessary, must only be done once
+    A[2    , iy] = 0.0
+    A[end-1, iy] = 0.0
+    A[end  , iy] = 0.0 # actually not necessary, must only be done once
     return
 end
 @parallel_indices (iy) function bc_x_noflux!(A::Data.Array)
@@ -226,8 +237,10 @@ end
 
 # horizontal boundaries
 @parallel_indices (ix) function bc_y_zero!(A::Data.Array)
-    A[ix, 1  ] = 0.0
-    A[ix, end] = 0.0
+    A[ix, 1    ] = 0.0 # actually not necessary, must only be done once
+    A[ix, 2    ] = 0.0
+    A[ix, end-1] = 0.0
+    A[ix, end  ] = 0.0 # actually not necessary, must only be done once
     return
 end
 @parallel_indices (ix) function bc_y_noflux!(A::Data.Array)
@@ -259,12 +272,12 @@ end
 
 #Stokes2D()
 
-@testset "StokesPrototype" begin
+@testset "StokesPrototypeBigV" begin
     Vx, Vy = Stokes2D()
     indsx = [3, 56, 60, 90, 99]
     indsy = [28, 68, 95, 96, 127]
     refsX = [-0.0004256954586403605 1.5704371157731378e-5 0.00020317457002628982 0.00020485661003272825 0.00019807580217962747; -0.002954374891725917 6.605275884106962e-5 0.0015886734760139 0.001549589156472289 0.0009164422446087828; -0.001544791481653481 3.530760363148521e-5 0.0008506677047454428 0.000825938977338414 0.0004701929646878827; 0.005828514660768712 -9.509562075414608e-5 -0.002886834816671759 -0.0028648080397676227 -0.002135766923882878; 0.005211592848221708 -0.0001942009430386829 -0.002519056628485078 -0.002518564909688592 -0.0020998610702983845]
     refsY = [0.00018118060009758292 0.005440240490767683 0.0036911883776263987 0.003582582196461027 0.0; -0.007326166456758924 -0.010428909007936273 -0.004082459048205107 -0.0039106270522065445 0.0; -0.007876334552195765 -0.011431292694232263 -0.0046128232709835085 -0.004409907104060302 0.0; -0.003475950534627877 0.0002256859223269555 -0.00035750322051714324 -0.00036212056844438597 0.0; -0.0017734202974535158 0.0026446919182487416 0.0013945745718235373 0.0013360116402855989 0.0]
-    @test all(refsX .≈ Vx[indsx,indsy])
-    @test all(refsY .≈ Vy[indsx,indsy])
+    @test all(refsX .≈ Vx[indsx.+1,indsy])
+    @test all(refsY .≈ Vy[indsx,indsy.+1])
 end
