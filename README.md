@@ -1,8 +1,6 @@
 # StokesFlow.jl
 
 # TODO
-* interpolate with cell-lists
-* optimize stokes solver
 * do some performance evaluations: what is slowest etc.
 * write README:
     * Intro

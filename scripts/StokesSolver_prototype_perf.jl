@@ -114,7 +114,7 @@ using Plots, Printf, Statistics, Test
 
     # PT setup and iterations
     @parallel compute_timesteps!(dτVx, dτVy, dτP, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
-    ncheck = min(5*min(Nx,Ny),2000)
+    ncheck = min(5*min(nx,ny),2000)
     ndtupdate = 10*min(nx,ny)
     dt = 0.0
     t1 = 0; itert1 = 11
