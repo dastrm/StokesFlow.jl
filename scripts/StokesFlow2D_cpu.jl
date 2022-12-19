@@ -25,12 +25,12 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     # time
     maxdisp = 0.5                               # dt is determined s.t. no marker moves further than maxdisp cells
     # physical parameters
-    g_y = 9.81                                  # earth gravity, m/s^2
-    lx, ly = 100000, 100000                     # domain size, m
-    μ_air, μ_matrix, μ_plume = 1e17, 1e19, 1e18 # Viscosity, Pa*s
-    ρ_air, ρ_matrix, ρ_plume = 1   , 3300, 3200 # Density, kg/m^3
+    g_y = 9.81                                  # earth gravity
+    lx, ly = 10, 10                             # domain size
+    μ_air, μ_matrix, μ_plume = 1e-2, 1e0, 1e-1  # Viscosity
+    ρ_air, ρ_matrix, ρ_plume = 1e-3, 3.3, 3.2   # Density, kg/m^3
     plume_x, plume_y = lx/2, ly/2               # plume midpoint
-    plume_r = 20000                             # plume radius
+    plume_r = ly/5                              # plume radius
     air_height = 0.2*ly                         # height of the 'sticky air' layer on top
     # discretization parameters
     marker_density = 5                          # use this amount of markers per grid step per dimension
@@ -113,6 +113,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
                 τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
                 g_y, dx, dy, Nx, Ny,
                 dt, maxdisp; use_free_surface_stabilization=true,
+                ϵ=1e-5,
                 print_info=print_info)
 
         # plot current state
@@ -403,7 +404,7 @@ Sets initial marker properties ρ_m and μ_m according to whether their coordina
 end
 
 
-StokesFlow2D()
+#StokesFlow2D()
 
 
 @testset "StokesFlow2D_cpu" begin
@@ -412,6 +413,6 @@ StokesFlow2D()
     # tests should not depend on a rng seed, see the Warning at https://docs.julialang.org/en/v1/stdlib/Random/
     result = StokesFlow2D(;Nt=nt,Nx=nx,Ny=ny,RAND_MARKER_POS=false,do_plot=false,print_info=false)
     inds   = [181, 219, 388, 444, 637, 920, 1049, 1074, 1223, 1367]
-    refs   = [5.16167425967578e-10, -4.448226006752059e-10, -1.5042959025661068e-9, 4.969181007693054e-9, -1.466557924043276e-9, 2.1178605832979315e-9, -3.027897978585612e-10, -2.0912258038281033e-9, -5.849238321416495e-10, 2.5293112415907947e-10]
-    @test all(refs .≈ result[inds])
+    refs   = [0.04974145217766237, -0.03512273865731893, -0.14844495700026145, 0.4927706169377982, -0.1486118118461089, 0.21083507100494975, -0.03009881585240687, -0.20891915972705769, -0.05836431607719553, 0.025274386167270724]
+    @test all(isapprox.(refs, result[inds]; atol=1e-4))
 end
