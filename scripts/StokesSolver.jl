@@ -2,21 +2,10 @@
 
 using Printf, Statistics
 
-# ADDITIONAL PARALLEL STENCIL MACROS, needed for free surface stabilization
-import ..ParallelStencil: INDICES
-ix, iy = INDICES[1], INDICES[2]
-ixi, iyi = :($ix+1), :($iy+1)
-# average in both dimension, and inner elements in y. corresponds to @av(@inn_y(..))
-macro av_inn_y(A::Symbol)  esc(:(($A[$ix  ,$iyi ] + $A[$ix+1,$iyi ] + $A[$ix,$iyi+1] + $A[$ix+1,$iyi+1])*0.25 )) end
-# central finite differences in x, inner elements in y. corresponds to @d_xi(@av_x(..))
-macro   d_xi_2(A::Symbol)  esc(:( $A[$ix+2,$iyi ] - $A[$ix  ,$iyi] )) end
-# central finite differences in y, inner elements in x. corresponds to @d_yi(@av_y(..))
-macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
-
 # STOKES SOLVER
 # Currently this is just:
 # - copy-paste from StokesSolver_prototype.jl
-# - additional free surface stabilization (using the density implicitly advected to the next timestep)
+#   with free surface stabilization (using the density implicitly advected to the next timestep)
 #   This is done to avoid oscillations of the free surface.
 @views function solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
                             τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
