@@ -3,7 +3,7 @@ using ParallelStencil.FiniteDifferences2D
 using StaticArrays
 import CUDA
 @init_parallel_stencil(CUDA, Float64, 2)
-include("StokesSolver.jl")
+include("StokesSolver_multixpu.jl")
 
 using Plots, Plots.Measures, ImplicitGlobalGrid, MAT
 using Test
@@ -139,14 +139,14 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
         # calculate velocities on grid
         t2 = 0
         # TODO: multi-xpu Stokes solver
-        #t2 = @elapsed begin
-        #    dt = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
-        #        τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
-        #        g_y, dx, dy, Nx, Ny,
-        #        dt, maxdisp; use_free_surface_stabilization=true,
-        #        ϵ=1e-5,
-        #        print_info=print_info)
-        #end
+        t2 = @elapsed begin
+            dt = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
+                τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
+                g_y, dx, dy, Nx, Ny,
+                dt, maxdisp, comm_cart; use_free_surface_stabilization=true,
+                ϵ=1e-5,
+                print_info=print_info&&rank==0)
+        end
 
         # move markers
         t3 = @elapsed begin
