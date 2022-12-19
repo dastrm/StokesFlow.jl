@@ -32,17 +32,6 @@ else
 end
 using Plots, Printf, Statistics, Test
 
-# ADDITIONAL PARALLEL STENCIL MACROS, needed for free surface stabilization
-import ..ParallelStencil: INDICES
-ix, iy = INDICES[1], INDICES[2]
-ixi, iyi = :($ix+1), :($iy+1)
-# average in both dimension, and inner elements in y. corresponds to @av(@inn_y(..))
-macro av_inn_y(A::Symbol)  esc(:(($A[$ix  ,$iyi ] + $A[$ix+1,$iyi ] + $A[$ix,$iyi+1] + $A[$ix+1,$iyi+1])*0.25 )) end
-# central finite differences in x, inner elements in y. corresponds to @d_xi(@av_x(..))
-macro   d_xi_2(A::Symbol)  esc(:( $A[$ix+2,$iyi ] - $A[$ix  ,$iyi] )) end
-# central finite differences in y, inner elements in x. corresponds to @d_yi(@av_y(..))
-macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
-
 @views function Stokes2D()
     # Physics
     lx, ly = [100000, 100000]./100000 # domain size
@@ -63,34 +52,34 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     dx, dy = lx/(nx-1), ly/(ny-1)
 
     # Array allocations
-    P    = @zeros(nx-1,ny-1)
-    τxx  = @zeros(nx-1,ny-1) #p-nodes
-    τyy  = @zeros(nx-1,ny-1) #p-nodes
-    Vx   = @zeros(nx  ,ny+1)
-    Vy   = @zeros(nx+1,ny  )
-    τxy  = @zeros(nx  ,ny  )
+    P     = @zeros(nx-1,ny-1)
+    τxx   = @zeros(nx-1,ny-1) #p-nodes
+    τyy   = @zeros(nx-1,ny-1) #p-nodes
+    Vx    = @zeros(nx  ,ny+1)
+    Vy    = @zeros(nx+1,ny  )
+    τxy   = @zeros(nx  ,ny  )
 
     # coordinates for points
-    x    = [(ix-1)*dx       for ix=1:nx  ] # basic nodes = τ_xy-nodes
-    y    = [(iy-1)*dy       for iy=1:ny  ]
-    x_p  = [(ix-1)*dx+0.5dx for ix=1:nx-1] # pressure nodes
-    y_p  = [(iy-1)*dy+0.5dy for iy=1:ny-1]
-    x_vx = x                               # Vx nodes
-    y_vx = [(iy-1)*dy-0.5dy for iy=1:ny+1]
-    x_vy = [(ix-1)*dx-0.5dx for ix=1:nx+1] # Vy nodes
-    y_vy = y
-    x_τxy= x
-    y_τxy= y
+    x     = [(ix-1)*dx       for ix=1:nx  ] # basic nodes = τ_xy-nodes
+    y     = [(iy-1)*dy       for iy=1:ny  ]
+    x_p   = [(ix-1)*dx+0.5dx for ix=1:nx-1] # pressure nodes
+    y_p   = [(iy-1)*dy+0.5dy for iy=1:ny-1]
+    x_vx  = x                               # Vx nodes
+    y_vx  = [(iy-1)*dy-0.5dy for iy=1:ny+1]
+    x_vy  = [(ix-1)*dx-0.5dx for ix=1:nx+1] # Vy nodes
+    y_vy  = y
+    x_τxy = x
+    y_τxy = y
 
     # set density & viscosity
     ρ_vy  = zeros(nx+1,ny  ) # on Vy-nodes
-    μ_b = zeros(nx  ,ny  ) # on τxy-nodes
+    μ_b   = zeros(nx  ,ny  ) # on τxy-nodes
     μ_p   = zeros(nx-1,ny-1) # on P-nodes (also τxx-, τyy-nodes)
     set_properties!(x_p  ,y_p  ,μ_p  ,plume_x,plume_y,plume_r,μ_matrix,μ_plume,μ_air,air_height) # viscosity: P-nodes
     set_properties!(x_τxy,y_τxy,μ_b,plume_x,plume_y,plume_r,μ_matrix,μ_plume,μ_air,air_height) # viscosity: τxy-nodes
     set_properties!(x_vy ,y_vy ,ρ_vy ,plume_x,plume_y,plume_r,ρ_matrix,ρ_plume,ρ_air,air_height) # density: Vy-nodes
     ρ_vy  = Data.Array(ρ_vy)
-    μ_b = Data.Array(μ_b)
+    μ_b   = Data.Array(μ_b)
     μ_p   = Data.Array(μ_p)
 
     #=
@@ -103,27 +92,31 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     =#
 
     # more arrays
-    ∇V        = @zeros(nx-1,ny-1)
+    ∇V       = @zeros(nx-1,ny-1)
     dτP      = @zeros(nx-1,ny-1)
-    Rx        = @zeros(nx-2,ny-1)
-    Ry        = @zeros(nx-1,ny-2)
-    dVxdτ     = @zeros(nx-2,ny-1)
-    dVydτ     = @zeros(nx-1,ny-2)
-    dτVx      = @zeros(nx-2,ny-1)
-    dτVy      = @zeros(nx-1,ny-2)
-    Vdmp      = 4.0
-    Vsc       = 0.25#1.0         # relaxation paramter for the momentum equations pseudo-timesteps limiters
-    Ptsc      = 1.0/4.0 
-    min_dxy2  = min(dx,dy)^2
-    max_nxy   = max(nx,ny)
-    dampX     = 1.0-Vdmp/nx # damping term for the x-momentum equation
-    dampY     = 1.0-Vdmp/ny # damping term for the y-momentum equation
+    Rx       = @zeros(nx-2,ny-1)
+    Ry       = @zeros(nx-1,ny-2)
+    dVxdτ    = @zeros(nx-2,ny-1)
+    dVydτ    = @zeros(nx-1,ny-2)
+    dτVx     = @zeros(nx-2,ny-1)
+    dτVy     = @zeros(nx-1,ny-2)
+    Vdmp     = 4.0
+    Vsc      = 0.45#1.0         # relaxation parameter for the momentum equations pseudo-timesteps limiters
+    Ptsc     = 1.0/4.0 * 2.0
+    min_dxy2 = min(dx,dy)^2
+    max_nxy  = max(nx,ny)
+    dampX    = 1.0-Vdmp/nx # damping term for the x-momentum equation
+    dampY    = 1.0-Vdmp/ny # damping term for the y-momentum equation
     
-    dt = 0.0
+    # numerical helper values
+    _dx = 1.0/dx
+    _dy = 1.0/dy
 
     # PT setup and iterations
     @parallel compute_timesteps!(dτVx, dτVy, dτP, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
-    ncheck = 500
+    ncheck = min(5*min(Nx,Ny),2000)
+    ndtupdate = 10*min(nx,ny)
+    dt = 0.0
     t1 = 0; itert1 = 11
     ϵ = 1e-9 # tol
     err_evo1=[]; err_evo2=[]
@@ -131,10 +124,8 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     while err > ϵ && iter <= iterMax
         if (iter==itert1) t1 = Base.time() end
 
-        # TODO improve kernels
-        @parallel compute_P!(∇V, P, Vx, Vy, dτP, dx, dy)
-        @parallel compute_τ!(∇V, τxx, τyy, τxy, Vx, Vy, μ_p, μ_b, dx, dy)
-        @parallel compute_dV!(Rx, Ry, dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, dx, dy, dt)
+        @parallel compute_P_τ!(∇V, P, Vx, Vy, dτP, τxx, τyy, τxy, μ_p, μ_b, _dx, _dy)
+        @parallel compute_dV!(dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, _dx, _dy, dt)
         @parallel compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
 
         # Free slip BC
@@ -143,12 +134,13 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
         @parallel (1:size(Vy,1)) bc_y_zero!(Vy)
         @parallel (1:size(Vy,2)) bc_x_noflux!(Vy)
 
-        if use_free_surface_stabilization
-            dt = maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
+        if use_free_surface_stabilization && (iter%ndtupdate == 0)
+            dt = compute_dt(Vx,Vy,maxdisp,dx,dy)
         end
 
         if iter%ncheck == 0
-            # TODO compute error better
+            dt_check = if use_free_surface_stabilization compute_dt(Vx,Vy,maxdisp,dx,dy) else 0.0 end
+            @parallel compute_Residuals!(Rx, Ry, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, _dx, _dy, dt_check)
             mean_Rx = mean(abs.(Rx)); mean_Ry = mean(abs.(Ry)); mean_∇V = mean(abs.(∇V))
             err = maximum([mean_Rx, mean_Ry, mean_∇V])
             push!(err_evo1, err); push!(err_evo2,iter)
@@ -177,6 +169,10 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     return Array(Vx), Array(Vy)
 end
 
+# this function is very slow and could be improved significantly, but is not often called
+function compute_dt(Vx,Vy,maxdisp,dx,dy)
+    return maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
+end
 
 @parallel function compute_timesteps!(dτVx, dτVy, dτP, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
     @all(dτVx) = Vsc*min_dxy2/@av_xa(μ_p)/4.1
@@ -185,31 +181,79 @@ end
     return
 end
 
-@parallel function compute_P!(∇V, P, Vx, Vy, dτP, dx, dy)
-    @all(∇V)  = @d_xi(Vx)/dx + @d_yi(Vy)/dy
-    @all(P)   = @all(P) - @all(dτP)*@all(∇V)
+@parallel_indices (ix,iy) function compute_P_τ!(∇V, P, Vx, Vy, dτP, τxx, τyy, τxy, μ_p, μ_b, _dx, _dy)
+    xmax, ymax = size(τxy)
+    if ix <= xmax && iy <= ymax
+        # read V arrays
+        vx0 = Vx[ix  ,iy  ]
+        vx1 = Vx[ix  ,iy+1]
+        vy0 = Vy[ix  ,iy  ]
+        vy1 = Vy[ix+1,iy  ]
+        # update τxx, τxx, P, ∇V
+        if ix < xmax && iy < ymax # size of P-nodes is 1 smaller than basic nodes (τxy) in each dimension
+            # read additional V
+            vx2 = Vx[ix+1,iy+1]
+            vy2 = Vy[ix+1,iy+1]
+            # update
+            dVx_dx = (vx2 - vx1)*_dx
+            dVy_dy = (vy2 - vy1)*_dy
+            div_V  = dVx_dx + dVy_dy
+            ∇V[ix,iy] = div_V
+            P[ix,iy] -= dτP[ix,iy]*div_V
+            μ = μ_p[ix,iy]
+            τxx[ix,iy] = 2.0*μ*(dVx_dx - 1.0/3.0*div_V)
+            τyy[ix,iy] = 2.0*μ*(dVy_dy - 1.0/3.0*div_V)
+        end
+        # update τxy
+        dVx_dy = (vx1 - vx0)*_dy
+        dVy_dx = (vy1 - vy0)*_dx
+        τxy[ix,iy] = 2.0*μ_b[ix,iy]*0.5*(dVx_dy + dVy_dx)
+    end
     return
 end
 
-@parallel function compute_τ!(∇V, τxx, τyy, τxy, Vx, Vy, μ_p, μ_b, dx, dy)
-    @all(τxx) = 2.0*@all(μ_p)*(@d_xi(Vx)/dx - 1.0/3.0*@all(∇V))
-    @all(τyy) = 2.0*@all(μ_p)*(@d_yi(Vy)/dy - 1.0/3.0*@all(∇V))
-    @all(τxy) = 2.0*@all(μ_b)*(0.5*(@d_ya(Vx)/dy + @d_xa(Vy)/dx))
-    return
+@inline function compute_ResX(ix,iy,τxx,τxy,P,_dx,_dy)
+    return ((τxx[ix+1,iy  ] - τxx[ix  ,iy])*_dx
+           +(τxy[ix+1,iy+1] - τxy[ix+1,iy])*_dy
+           -(  P[ix+1,iy  ] -   P[ix  ,iy])*_dx)
 end
 
-@parallel function compute_dV!(Rx, Ry, dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, dx, dy, dt)
-    @all(Rx)    = @d_xa(τxx)/dx + @d_yi(τxy)/dy - @d_xa(P)/dx
-    @all(Ry)    = @d_ya(τyy)/dy + @d_xi(τxy)/dx - @d_ya(P)/dy + 
-                    g_y*(@inn(ρ_vy) - dt*(@av_inn_y(Vx)*@d_xi_2(ρ_vy)/(2*dx) + @inn(Vy)*@d_yi_2(ρ_vy)/(2*dy)))
-    @all(dVxdτ) = dampX*@all(dVxdτ) + @all(Rx)
-    @all(dVydτ) = dampY*@all(dVydτ) + @all(Ry)
+@inline function compute_ResY(ix,iy,τyy,τxy,P,ρ_vy,Vx,Vy,g_y,_dx,_dy,dt)
+    av_inn_y_Vx = 0.25*(Vx[ix,iy+1] + Vx[ix+1,iy+1] + Vx[ix,iy+2] + Vx[ix+1,iy+2])
+    d_xi_2_ρ_vy = ρ_vy[ix+2,iy+1] - ρ_vy[ix,iy+1]
+    d_yi_2_ρ_vy = ρ_vy[ix+1,iy+2] - ρ_vy[ix+1,iy]
+    return ((τyy[ix  ,iy+1] - τyy[ix,iy  ])*_dy
+           +(τxy[ix+1,iy+1] - τxy[ix,iy+1])*_dx
+           -(  P[ix  ,iy+1] -   P[ix,iy  ])*_dy
+           +g_y*(ρ_vy[ix+1,iy+1] - dt*(  av_inn_y_Vx   * d_xi_2_ρ_vy*0.5*_dx
+                                       + Vy[ix+1,iy+1] * d_yi_2_ρ_vy*0.5*_dy)))
+end
+
+@parallel_indices (ix,iy) function compute_dV!(dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, _dx, _dy, dt)
+    if ix <= size(dVxdτ,1) && iy <= size(dVxdτ,2)
+        Rx_temp = compute_ResX(ix,iy,τxx,τxy,P,_dx,_dy)
+        dVxdτ[ix,iy] = dampX*dVxdτ[ix,iy] + Rx_temp
+    end
+    if ix <= size(dVydτ,1) && iy <= size(dVydτ,2)
+        Ry_temp = compute_ResY(ix,iy,τyy,τxy,P,ρ_vy,Vx,Vy,g_y,_dx,_dy,dt)
+        dVydτ[ix,iy] = dampY*dVydτ[ix,iy] + Ry_temp
+    end
     return
 end
 
 @parallel function compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
     @inn(Vx) = @inn(Vx) + @all(dτVx)*@all(dVxdτ)
     @inn(Vy) = @inn(Vy) + @all(dτVy)*@all(dVydτ)
+    return
+end
+
+@parallel_indices (ix,iy) function compute_Residuals!(Rx, Ry, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, _dx, _dy, dt)
+    if ix <= size(Rx,1) && iy <= size(Rx,2)
+        Rx[ix,iy] = compute_ResX(ix,iy,τxx,τxy,P,_dx,_dy)
+    end
+    if ix <= size(Ry,1) && iy <= size(Ry,2)
+        Ry[ix,iy] = compute_ResY(ix,iy,τyy,τxy,P,ρ_vy,Vx,Vy,g_y,_dx,_dy,dt)
+    end
     return
 end
 
@@ -260,7 +304,7 @@ end
 
 #Stokes2D()
 
-@testset "StokesPrototype" begin
+@testset "StokesPrototype_perf" begin
     Vx, Vy = Stokes2D() # with Nx = Ny = 127
     indsx = [3, 56, 60, 90, 99]
     indsy = [28, 68, 95, 96, 127]

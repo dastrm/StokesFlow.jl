@@ -93,13 +93,14 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     μ_τxy = Data.Array(μ_τxy)
     μ_p   = Data.Array(μ_p)
 
+    #=
     # plot density & viscosity
     p1 = heatmap(x_p  ,y_p  ,Array(μ_p)'  ,yflip=true,title="Viscosity μ_p"  ,xlabel='x',ylabel='y',xlims=(0,lx),ylims=(0,ly),aspect_ratio=1)
     p2 = heatmap(x_τxy,y_τxy,Array(μ_τxy)',yflip=true,title="Viscosity μ_τxy",xlabel='x',ylabel='y',xlims=(0,lx),ylims=(0,ly),aspect_ratio=1)
     p3 = heatmap(x_vy ,y_vy ,Array(ρ_vy)' ,yflip=true,title="Density ρ_vy"   ,xlabel='x',ylabel='y',xlims=(0,lx),ylims=(0,ly),aspect_ratio=1)
     display(plot(p1,p2,p3))
     #display(plot(p1)); display(plot(p2)); display(plot(p3))
-
+    =#
 
     # more arrays
     ∇V        = @zeros(nx-1,ny-1)
@@ -124,7 +125,7 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     @parallel compute_timesteps!(dτVx, dτVy, dτPt, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
     ncheck = 500
     t1 = 0; itert1 = 11
-    ϵ = 0.01 # tol
+    ϵ = 1e-9 # tol
     err_evo1=[]; err_evo2=[]
     err = 2ϵ; iter=1; niter=0; iterMax=100000
     while err > ϵ && iter <= iterMax
@@ -152,7 +153,7 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
             mean_Rx = mean(abs.(Rx)); mean_Ry = mean(abs.(Ry)); mean_∇V = mean(abs.(∇V))
             err = maximum([mean_Rx, mean_Ry, mean_∇V])
             push!(err_evo1, err); push!(err_evo2,iter)
-            @printf("Total steps = %d, err = %1.3e [mean_Rx=%1.3e, mean_Ry=%1.3e, mean_∇V=%1.3e] \n", iter, err, mean_Rx, mean_Ry, mean_∇V)
+            #@printf("Total steps = %d, err = %1.3e [mean_Rx=%1.3e, mean_Ry=%1.3e, mean_∇V=%1.3e] \n", iter, err, mean_Rx, mean_Ry, mean_∇V)
         end
 
         iter+=1; niter+=1
@@ -163,7 +164,7 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     T_eff    = A_eff/t_it
     @printf("Total steps = %d, err = %1.3e, time = %1.3e sec (@ T_eff = %1.2f GB/s) \n", niter, err, t2-t1, round(T_eff, sigdigits=2))
 
-
+    #=
     # Visualization
     p1 = heatmap(x_p ,  y_p, Array(P)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Pressure")
     p2 = heatmap(x_vy, y_vy, Array(Vy)', yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Vy")
@@ -172,6 +173,7 @@ macro   d_yi_2(A::Symbol)  esc(:( $A[$ixi ,$iy+2] - $A[$ixi ,$iy ] )) end
     p6 = heatmap(x_vx, y_vx, Array(Vx)', yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="Vx")
     #display(plot(p1, p2, p4, p5))
     display(plot(p1,p2,p5,p6))
+    =#
 
     return Array(Vx), Array(Vy)
 end
@@ -260,11 +262,11 @@ end
 #Stokes2D()
 
 @testset "StokesPrototype" begin
-    Vx, Vy = Stokes2D()
+    Vx, Vy = Stokes2D() # with Nx = Ny = 127
     indsx = [3, 56, 60, 90, 99]
     indsy = [28, 68, 95, 96, 127]
-    refsX = [-0.0004256954586403605 1.5704371157731378e-5 0.00020317457002628982 0.00020485661003272825 0.00019807580217962747; -0.002954374891725917 6.605275884106962e-5 0.0015886734760139 0.001549589156472289 0.0009164422446087828; -0.001544791481653481 3.530760363148521e-5 0.0008506677047454428 0.000825938977338414 0.0004701929646878827; 0.005828514660768712 -9.509562075414608e-5 -0.002886834816671759 -0.0028648080397676227 -0.002135766923882878; 0.005211592848221708 -0.0001942009430386829 -0.002519056628485078 -0.002518564909688592 -0.0020998610702983845]
-    refsY = [0.00018118060009758292 0.005440240490767683 0.0036911883776263987 0.003582582196461027 0.0; -0.007326166456758924 -0.010428909007936273 -0.004082459048205107 -0.0039106270522065445 0.0; -0.007876334552195765 -0.011431292694232263 -0.0046128232709835085 -0.004409907104060302 0.0; -0.003475950534627877 0.0002256859223269555 -0.00035750322051714324 -0.00036212056844438597 0.0; -0.0017734202974535158 0.0026446919182487416 0.0013945745718235373 0.0013360116402855989 0.0]
-    @test all(refsX .≈ Vx[indsx,indsy])
-    @test all(refsY .≈ Vy[indsx,indsy])
+    refsX = [-0.00037740176256595914 6.714046038354702e-5 0.00025308827285352 0.00025441536351831996 0.00023890573893336602; -0.002592175411900232 0.0005020525259329576 0.0019509822422144605 0.0018969715666351265 0.0010950028140514069; -0.0013559074661861751 0.0002549196102522001 0.0010425458839549392 0.001009294888462192 0.0005616178216118598; 0.005118644439457764 -0.0012976498989358668 -0.003580674973359176 -0.0035410459393814256 -0.0025608227116031244; 0.004590773065094249 -0.000972901497461574 -0.003130724328322405 -0.0031198745457242235 -0.0025232813527596046]
+    refsY = [0.00316821054109413 0.006524368487621358 0.003978255591168619 0.0038510995001933995 0.0; -0.004026809431748747 -0.009951698997411856 -0.004845877202480422 -0.004647055882448395 0.0; -0.004545379157896374 -0.010981561240649675 -0.0054485849911919335 -0.005213888559230767 0.0; -0.000398421923889966 0.0010221245300420553 -0.0005914086732068255 -0.000600005663732289 0.0; 0.001232186058094373 0.00359245103372998 0.001402707747374657 0.001330987051017147 0.0]
+    @test all(isapprox.(refsX, Vx[indsx,indsy]; atol=1e-7))
+    @test all(isapprox.(refsY, Vy[indsx,indsy]; atol=1e-7))
 end
