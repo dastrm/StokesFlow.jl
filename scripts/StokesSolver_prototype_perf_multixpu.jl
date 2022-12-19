@@ -123,7 +123,6 @@ using Plots, Printf, Statistics, Test, ImplicitGlobalGrid, MPI
         if iter%ncheck == 0
             dt_check = if use_free_surface_stabilization compute_dt(Vx,Vy,maxdisp,dx,dy,comm_cart) else 0.0 end
             @parallel compute_Residuals!(Rx, Ry, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, _dx, _dy, dt_check)
-            @parallel compute_Residuals!(Rx, Ry, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, _dx, _dy, dt_check)
             err = compute_err(Rx,Ry,∇V,comm_cart)
             push!(err_evo1, err); push!(err_evo2,iter)
             #@printf("Total steps = %d, err = %1.3e [mean_Rx=%1.3e, mean_Ry=%1.3e, mean_∇V=%1.3e] \n", iter, err, mean_Rx, mean_Ry, mean_∇V)
