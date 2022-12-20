@@ -55,19 +55,19 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
     # --- ARRAYS ---
     # marker CPU arrays for easy initializing with IC
-    x_m = zeros(Nm)                        # marker x coords
-    y_m = zeros(Nm)                        # marker y coords
-    ρ_m = zeros(Nm)                        # marker property: density
-    μ_m = zeros(Nm)                        # marker property: viscosity
+    x_m = zeros(Nm)                             # marker x coords
+    y_m = zeros(Nm)                             # marker y coords
+    ρ_m = zeros(Nm)                             # marker property: density
+    μ_m = zeros(Nm)                             # marker property: viscosity
 
     # grid array allocations
     # maybe Vx & Vy sizes need adjustments for marker interpolation (multi-GPU case, simplify single GPU). TODO
     P = @zeros(Nx - 1, Ny - 1)
-    Vx = @zeros(Nx, Ny + 1)                    # Velocity in x-direction
-    Vy = @zeros(Nx + 1, Ny)                    # Velocity in y-direction
-    ρ_vy = @zeros(Nx + 1, Ny)                    # Density on vy-nodes
-    μ_b = @zeros(Nx, Ny)                    # Viscosity μ on basic nodes
-    μ_p = @zeros(Nx - 1, Ny - 1)                    # Viscosity μ on pressure nodes
+    Vx = @zeros(Nx, Ny + 1)                     # Velocity in x-direction
+    Vy = @zeros(Nx + 1, Ny)                     # Velocity in y-direction
+    ρ_vy = @zeros(Nx + 1, Ny)                   # Density on vy-nodes
+    μ_b = @zeros(Nx, Ny)                        # Viscosity μ on basic nodes
+    μ_p = @zeros(Nx - 1, Ny - 1)                # Viscosity μ on pressure nodes
 
     # additional arrays for Stokes Solver
     τxx = @zeros(Nx - 1, Ny - 1)
@@ -88,13 +88,11 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     wt_sum = @zeros(interp_size)
 
     # coordinates for all grid points
-    x = [(ix - 1) * dx for ix = 1:Nx] # basic nodes
+    x = [(ix - 1) * dx for ix = 1:Nx]              # basic nodes
     y = [(iy - 1) * dy for iy = 1:Ny]
-    rank == 0 && @show lxl, x[end]
-    rank == 0 && @show lyl, y[end]
-    x_p = [(ix - 1) * dx + 0.5dx for ix = 1:Nx-1] # pressure nodes
+    x_p = [(ix - 1) * dx + 0.5dx for ix = 1:Nx-1]  # pressure nodes
     y_p = [(iy - 1) * dy + 0.5dy for iy = 1:Ny-1]
-    x_vx = x                               # Vx nodes
+    x_vx = x                                       # Vx nodes
     y_vx = [(iy - 1) * dy - 0.5dy for iy = 1:Ny+1]
     x_vy = [(ix - 1) * dx - 0.5dx for ix = 1:Nx+1] # Vy nodes
     y_vy = y
@@ -108,9 +106,9 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     setInitialMarkerCoords!(x_m, y_m, Nmx, Nmy, x, y, RAND_MARKER_POS::Bool)
     setInitialMarkerProperties!(coords, lxl, lyl, x_m, y_m, ρ_m, μ_m, Nm, μ_air, μ_matrix, μ_plume, ρ_air, ρ_matrix, ρ_plume, plume_x, plume_y, plume_r, air_height)
     if do_plot
-        # TODO: multi-xpu showPlot
-        # showPlot(x, y, x_p, y_p, x_vx, y_vx, x_vy, y_vy, P, Vx, Vy, ρ_vy, μ_b, μ_p, xy_m, ρ_m, lx, ly)
+        saveStats!(dims, Nt)
         saveMarkers!(0, rank, coords, [lxl, lyl], x_m, y_m, ρ_m)
+        saveGrid!(0, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
     end
     # transform marker arrays to xPU arrays
     x_m = Data.Array(x_m)
@@ -137,15 +135,13 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
         end
 
         # calculate velocities on grid
-        t2 = 0
-        # TODO: multi-xpu Stokes solver
         t2 = @elapsed begin
             dt = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
                 τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
                 g_y, dx, dy, Nx, Ny,
                 dt, maxdisp, comm_cart; use_free_surface_stabilization=true,
                 ϵ=1e-5,
-                print_info=print_info&&rank==0)
+                print_info=print_info && rank == 0)
         end
 
         # move markers
@@ -165,9 +161,8 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
         # plot current state
         if do_plot
-            # TODO: multi-xpu showPlot
-            # showPlot(x, y, x_p, y_p, x_vx, y_vx, x_vy, y_vy, P, Vx, Vy, ρ_vy, μ_b, μ_p, xy_m, ρ_m, lx, ly)
             saveMarkers!(t, rank, coords, [lxl, lyl], x_m, y_m, ρ_m)
+            saveGrid!(t, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
         end
 
         if t > 2
@@ -349,23 +344,6 @@ Moves markers according to a fourth order Runge-Kutta method
     return nothing
 end
 
-# TODO: multi-xpu showPlot
-function showPlot(x, y, x_p, y_p, x_vx, y_vx, x_vy, y_vy, P, Vx, Vy, ρ_vy, μ_b, μ_p, x_m, y_m, ρ_m, lx, ly)
-
-    #p1 = heatmap(x_vy ,  y_vy, Array(ρ_vy)' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="ρ_vy")
-    p2 = heatmap(x, y, Array(μ_b)', yflip=true, aspect_ratio=1, xlims=(0, lx), ylims=(0, ly), c=:inferno, title="μ_b")
-    #p3 = heatmap(x_p  ,  y_p , Array(μ_p )' , yflip=true, aspect_ratio=1, xlims=(0,lx), ylims=(0,ly), c=:inferno, title="μ_p" )
-    #p4 = scatter(xy_m[1,:],xy_m[2,:],color=Int.(round.(ρ_m)),xlims=(x[1],x[end]),ylims=(y[1],y[end]),aspect_ratio=1,yflip=true,legend=false,markersize=3,markerstrokewidth=0)
-
-    p5 = heatmap(x_p, y_p, Array(P)', yflip=true, aspect_ratio=1, xlims=(0, lx), ylims=(0, ly), c=:inferno, title="Pressure")
-    p6 = heatmap(x_vx, y_vx, Array(Vx)', yflip=true, aspect_ratio=1, xlims=(0, lx), ylims=(0, ly), c=:inferno, title="Vx")
-    p7 = heatmap(x_vy, y_vy, Array(Vy)', yflip=true, aspect_ratio=1, xlims=(0, lx), ylims=(0, ly), c=:inferno, title="Vy")
-
-    display(plot(p2, p5, p6, p7))
-    #display(plot(p4))
-    return nothing
-end
-
 """
     topleftIndexRelDist(x_grid_min, y_grid_min, x, y, dx, dy)
 
@@ -536,18 +514,62 @@ Sets initial marker properties `ρ_m` and `μ_m` according to whether their coor
 end
 
 """
+    saveStats!(dims, nt)
+
+Saves visualization relevant stats to disk in .mat format
+"""
+@views function saveStats!(dims, nt)
+    file = matopen("viz_out/stats.mat", "w")
+
+    write(file, "dims", dims)
+    write(file, "nt", nt)
+
+    close(file)
+
+    return nothing
+end
+
+"""
     saveMarkers!(it, rank, coords, localDomain, x_m, y_m, ρ_m)
 
 Saves marker positions and densities to disk in .mat format
 """
 @views function saveMarkers!(it, rank, coords, localDomain, x_m, y_m, ρ_m)
-    x_mg = Array(x_m) .+ localDomain[1] * coords[1]
-    y_mg = Array(y_m) .+ localDomain[2] * coords[2]
-
     file = matopen(string(@sprintf("viz_out/markers_%04d_%04d", it, rank), ".mat"), "w")
-    write(file, "x_m", convert.(Float32, x_mg))
-    write(file, "y_m", convert.(Float32, y_mg))
+
+    write(file, "x_m", convert.(Float32, Array(x_m) .+ (localDomain[1] * coords[1])))
+    write(file, "y_m", convert.(Float32, Array(y_m) .+ (localDomain[2] * coords[2])))
     write(file, "rho_m", convert.(Float32, Array(ρ_m)))
+
+    close(file)
+
+    return nothing
+end
+
+"""
+    saveGrid(x, y, x_p, y_p, x_vx, y_vx, x_vy, y_vy, P, Vx, Vy)
+
+Saves relevant arrays on various grid points to disk in .mat format
+"""
+@views function saveGrid!(it, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
+    file = matopen(string(@sprintf("viz_out/grid_%04d_%04d", it, rank), ".mat"), "w")
+
+    write(file, "x", convert.(Float32, Array(x)))
+    write(file, "y", convert.(Float32, Array(y)))
+    write(file, "mu_b", convert.(Float32, Array(μ_b)))
+
+    write(file, "x_p", convert.(Float32, Array(x_p)))
+    write(file, "y_p", convert.(Float32, Array(y_p)))
+    write(file, "P", convert.(Float32, Array(P)))
+
+    write(file, "x_vx", convert.(Float32, Array(x_vx)))
+    write(file, "y_vx", convert.(Float32, Array(y_vx)))
+    write(file, "Vx", convert.(Float32, Array(Vx)))
+
+    write(file, "x_vy", convert.(Float32, Array(x_vy)))
+    write(file, "y_vy", convert.(Float32, Array(y_vy)))
+    write(file, "Vy", convert.(Float32, Array(Vy)))
+
     close(file)
 
     return nothing
