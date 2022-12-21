@@ -106,7 +106,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     setInitialMarkerCoords!(x_m, y_m, Nmx, Nmy, x, y, RAND_MARKER_POS::Bool)
     setInitialMarkerProperties!(coords, lxl, lyl, x_m, y_m, ρ_m, μ_m, Nm, μ_air, μ_matrix, μ_plume, ρ_air, ρ_matrix, ρ_plume, plume_x, plume_y, plume_r, air_height)
     if do_plot
-        saveStats!(dims, Nt)
+        (rank == 0) && saveStats!(dims, Nt)
         saveMarkers!(0, rank, coords, [lxl, lyl], x_m, y_m, ρ_m)
         saveGrid!(0, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
     end
