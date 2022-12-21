@@ -1,5 +1,7 @@
 # StokesFlow.jl
 
+[![CI action](https://github.com/dastrm/StokesFlow.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/dastrm/StokesFlow.jl/actions/workflows/CI.yml)
+
 Multi-xPU solver for the 2D Stokes equations with continuity written in Julia.
 
 ## Introduction
