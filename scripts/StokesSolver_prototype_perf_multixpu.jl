@@ -8,6 +8,8 @@ else
 end
 using Plots, Printf, Statistics, Test, ImplicitGlobalGrid, MPI
 
+include("GlobalGather.jl")
+
 @views function Stokes2D()
     # Physics
     lx, ly = [100000, 100000]./100000 # domain size
@@ -22,9 +24,9 @@ using Plots, Printf, Statistics, Test, ImplicitGlobalGrid, MPI
     maxdisp = 0.5
 
     # Numerics
-    nx, ny = 65,65#128,128
-
-    me, dims, nprocs, coords, comm_cart = init_global_grid(nx,ny,1;init_MPI=true)
+    # !!! THIS IS CURRENTLY SET UP FOR 6 PROCESSES !!!
+    nx, ny = 44,65#128,128
+    me, dims, nprocs, coords, comm_cart = init_global_grid(nx,ny,1;init_MPI=true,dimx=3)
 
     # Derived Numerics
     dx, dy = lx/(nx_g()-1), ly/(ny_g()-1)
@@ -147,26 +149,10 @@ using Plots, Printf, Statistics, Test, ImplicitGlobalGrid, MPI
     display(plot(p1,p2,p5,p6))
     =#
 
-    # this manually assembles the complete Vx, Vy arrays for dims = (2,2,1)
-    if all(dims .== (2, 2, 1))
-        tmpx = zeros(2 .* size(Vx))
-        tmpy = zeros(2 .* size(Vy))
-        gather!(Array(Vx),tmpx; root=0)
-        gather!(Array(Vy),tmpy; root=0)
+    # Assemble the return values as if a single process computed them, for tests
+    Vx_glob, Vy_glob = gather_V_grid(Vx, Vy, me, dims, nx, ny)
 
-        Vx_full = tmpx[setdiff(1:end, (nx+1,nx+2)), setdiff(1:end, (ny, ny+1, ny+2))]
-        @assert size(Vx_full) == (128,129)
-        Vy_full = tmpy[setdiff(1:end, (nx,nx+1,nx+2)), setdiff(1:end, (ny+1,ny+2))]
-        @assert size(Vy_full) == (129,128)
-
-        finalize_global_grid()
-        return Vx_full, Vy_full, me
-
-    else
-        finalize_global_grid()
-        return Array(Vx), Array(Vy), me
-    end
-
+    return Vx_glob, Vy_glob, me
 end
 
 
