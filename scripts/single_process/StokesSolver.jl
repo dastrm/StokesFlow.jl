@@ -3,10 +3,6 @@
 using Printf, Statistics
 
 # STOKES SOLVER
-# Currently this is just:
-# - copy-paste from StokesSolver_prototype.jl
-#   with free surface stabilization (using the density implicitly advected to the next timestep)
-#   This is done to avoid oscillations of the free surface.
 @views function solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
                             τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
                             g_y, dx, dy, Nx, Ny,
@@ -78,9 +74,9 @@ using Printf, Statistics
 end
 
 
-# this function is very slow and could be improved significantly, but is not often called
-function compute_dt(Vx,Vy,maxdisp,dx,dy)
-    return maxdisp*min(dx/maximum(Vx),dy/maximum(Vy))
+# this function is very slow and could be improved significantly, but is not called often
+@views function compute_dt(Vx,Vy,maxdisp,dx,dy)
+    return maxdisp*min(dx/maximum(Vx[2:end-1,:]),dy/maximum(Vy[:,2:end-1]))
 end
 
 @parallel function compute_timesteps!(dτVx, dτVy, dτP, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
@@ -94,15 +90,15 @@ end
     xmax, ymax = size(τxy)
     if ix <= xmax && iy <= ymax
         # read V arrays
-        vx0 = Vx[ix  ,iy  ]
-        vx1 = Vx[ix  ,iy+1]
-        vy0 = Vy[ix  ,iy  ]
-        vy1 = Vy[ix+1,iy  ]
+        vx0 = Vx[ix+1,iy  ]
+        vx1 = Vx[ix+1,iy+1]
+        vy0 = Vy[ix  ,iy+1]
+        vy1 = Vy[ix+1,iy+1]
         # update τxx, τxx, P, ∇V
         if ix < xmax && iy < ymax # size of P-nodes is 1 smaller than basic nodes (τxy) in each dimension
             # read additional V
-            vx2 = Vx[ix+1,iy+1]
-            vy2 = Vy[ix+1,iy+1]
+            vx2 = Vx[ix+2,iy+1]
+            vy2 = Vy[ix+1,iy+2]
             # update
             dVx_dx = (vx2 - vx1)*_dx
             dVy_dy = (vy2 - vy1)*_dy
@@ -128,14 +124,14 @@ end
 end
 
 @inline function compute_ResY(ix,iy,τyy,τxy,P,ρ_vy,Vx,Vy,g_y,_dx,_dy,dt)
-    av_inn_y_Vx = 0.25*(Vx[ix,iy+1] + Vx[ix+1,iy+1] + Vx[ix,iy+2] + Vx[ix+1,iy+2])
+    av_inn_y_Vx = 0.25*(Vx[ix+1,iy+1] + Vx[ix+2,iy+1] + Vx[ix+1,iy+2] + Vx[ix+2,iy+2])
     d_xi_2_ρ_vy = ρ_vy[ix+2,iy+1] - ρ_vy[ix,iy+1]
     d_yi_2_ρ_vy = ρ_vy[ix+1,iy+2] - ρ_vy[ix+1,iy]
     return ((τyy[ix  ,iy+1] - τyy[ix,iy  ])*_dy
            +(τxy[ix+1,iy+1] - τxy[ix,iy+1])*_dx
            -(  P[ix  ,iy+1] -   P[ix,iy  ])*_dy
            +g_y*(ρ_vy[ix+1,iy+1] - dt*(  av_inn_y_Vx   * d_xi_2_ρ_vy*0.5*_dx
-                                       + Vy[ix+1,iy+1] * d_yi_2_ρ_vy*0.5*_dy)))
+                                       + Vy[ix+1,iy+2] * d_yi_2_ρ_vy*0.5*_dy)))
 end
 
 @parallel_indices (ix,iy) function compute_dV!(dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, _dx, _dy, dt)
@@ -150,9 +146,13 @@ end
     return
 end
 
-@parallel function compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
-    @inn(Vx) = @inn(Vx) + @all(dτVx)*@all(dVxdτ)
-    @inn(Vy) = @inn(Vy) + @all(dτVy)*@all(dVydτ)
+@parallel_indices (ix,iy) function compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
+    if ix <= size(dτVx,1) && iy <= size(dτVx,2)
+        Vx[ix+2,iy+1] += dτVx[ix,iy]*dVxdτ[ix,iy]
+    end
+    if ix <= size(dτVy,1) && iy <= size(dτVy,2)
+        Vy[ix+1,iy+2] += dτVy[ix,iy]*dVydτ[ix,iy]
+    end
     return
 end
 
@@ -168,8 +168,10 @@ end
 
 # side boundaries
 @parallel_indices (iy) function bc_x_zero!(A::Data.Array)
-    A[1  , iy] = 0.0
-    A[end, iy] = 0.0
+    A[1    , iy] = -A[3    , iy]
+    A[2    , iy] = 0.0
+    A[end  , iy] = -A[end-2, iy]
+    A[end-1, iy] = 0.0
     return
 end
 @parallel_indices (iy) function bc_x_noflux!(A::Data.Array)
@@ -180,8 +182,10 @@ end
 
 # horizontal boundaries
 @parallel_indices (ix) function bc_y_zero!(A::Data.Array)
-    A[ix, 1  ] = 0.0
-    A[ix, end] = 0.0
+    A[ix, 1    ] = -A[ix, 3    ]
+    A[ix, 2    ] = 0.0
+    A[ix, end  ] = -A[ix, end-2]
+    A[ix, end-1] = 0.0
     return
 end
 @parallel_indices (ix) function bc_y_noflux!(A::Data.Array)

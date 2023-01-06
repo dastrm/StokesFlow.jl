@@ -3,7 +3,7 @@ using ParallelStencil.FiniteDifferences2D
 using StaticArrays
 import CUDA
 @init_parallel_stencil(CUDA, Float64, 2)
-include("../StokesSolver.jl")
+include("../single_process/StokesSolver.jl")
 
 using Plots,Plots.Measures
 using Test
@@ -56,8 +56,8 @@ function time_stokes_single_process(n)
     # grid array allocations
     # maybe Vx & Vy sizes need adjustments for marker interpolation (multi-GPU case, simplify single GPU). TODO
     P    = @zeros(Nx-1,Ny-1)
-    Vx   = @zeros(Nx  ,Ny+1)                    # Velocity in x-direction
-    Vy   = @zeros(Nx+1,Ny  )                    # Velocity in y-direction
+    Vx   = @zeros(Nx+2,Ny+1)                    # Velocity in x-direction, extended in x-direction in preparation for multi-processing
+    Vy   = @zeros(Nx+1,Ny+2)                    # Velocity in y-direction, extended in y-direction in preparation for multi-processing
     ρ_vy = @zeros(Nx+1,Ny  )                    # Density on vy-nodes
     μ_b  = @zeros(Nx  ,Ny  )                    # Viscosity μ on basic nodes
     μ_p  = @zeros(Nx-1,Ny-1)                    # Viscosity μ on pressure nodes
@@ -85,15 +85,17 @@ function time_stokes_single_process(n)
     y    = [(iy-1)*dy       for iy=1:Ny  ]
     x_p  = [(ix-1)*dx+0.5dx for ix=1:Nx-1] # pressure nodes
     y_p  = [(iy-1)*dy+0.5dy for iy=1:Ny-1]
-    x_vx = x                               # Vx nodes
+    x_vx = [(ix-2)*dx       for ix=1:Nx+2] # Vx nodes
     y_vx = [(iy-1)*dy-0.5dy for iy=1:Ny+1]
     x_vy = [(ix-1)*dx-0.5dx for ix=1:Nx+1] # Vy nodes
-    y_vy = y
+    y_vy = [(iy-2)*dy       for iy=1:Ny+2]
+    x_ρ  = x_vy                            # nodes for ρ: same as Vy, but smaller in y
+    y_ρ  = y_vy[2:end-1]
     # consistency checks
-    @assert size(x_p ,1) == size(P ,1) && size(y_p ,1) == size(P ,2)
-    @assert size(x_vx,1) == size(Vx,1) && size(y_vx,1) == size(Vx,2)
-    @assert size(x_vy,1) == size(Vy,1) && size(y_vy,1) == size(Vy,2)
-    @assert size(ρ_vy)   == size(Vy)
+    @assert size(x_p ,1) == size(P   ,1) && size(y_p ,1) == size(P   ,2)
+    @assert size(x_vx,1) == size(Vx  ,1) && size(y_vx,1) == size(Vx  ,2)
+    @assert size(x_vy,1) == size(Vy  ,1) && size(y_vy,1) == size(Vy  ,2)
+    @assert size(x_ρ,1)  == size(ρ_vy,1) && size(y_ρ ,1) == size(ρ_vy,2)
 
     # --- INITIAL CONDITIONS ---
     setInitialMarkerCoords!(xy_m, Nmx, Nmy, x, y, false)
@@ -107,9 +109,9 @@ function time_stokes_single_process(n)
     dt = 0.0
 
     # interpolate material properties to grid
-    bilinearMarkerToGrid!(x_vy[1],y_vy[1],ρ_vy,xy_m,ρ_m,dx,dy, val_wt_sum,wt_sum)
-    bilinearMarkerToGrid!(x[1]   ,y[1]   ,μ_b ,xy_m,μ_m,dx,dy, val_wt_sum,wt_sum)
-    bilinearMarkerToGrid!(x_p[1] ,y_p[1] ,μ_p ,xy_m,μ_m,dx,dy, val_wt_sum,wt_sum)
+    bilinearMarkerToGrid!(x_ρ[1],y_ρ[1],ρ_vy,xy_m,ρ_m,dx,dy, val_wt_sum,wt_sum)
+    bilinearMarkerToGrid!(x[1]  ,y[1]  ,μ_b ,xy_m,μ_m,dx,dy, val_wt_sum,wt_sum)
+    bilinearMarkerToGrid!(x_p[1],y_p[1],μ_p ,xy_m,μ_m,dx,dy, val_wt_sum,wt_sum)
 
     dt, T_eff = solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
                 τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
