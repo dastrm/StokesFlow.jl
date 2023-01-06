@@ -109,7 +109,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
         bilinearMarkerToGrid!(x_p ,y_p ,μ_p ,xy_m,μ_m,dx,dy)
 
         # calculate velocities on grid
-        dt = solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
+        dt,_ = solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
                 τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
                 g_y, dx, dy, Nx, Ny,
                 dt, maxdisp; use_free_surface_stabilization=true,
