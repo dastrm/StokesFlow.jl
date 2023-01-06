@@ -293,7 +293,7 @@ function interpolateV(x, y, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dx, 
                          (1 - dxij) * (v5 - 2v1 + v3) +
                          dxij * (v6 - 2v2 + v4))
     end
-    vx += correction
+    vy += correction
 
     return vx, vy
 end
