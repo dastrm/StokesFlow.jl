@@ -125,7 +125,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
         # calculate velocities on grid
         t2 = @elapsed begin
-            dt = solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
+            dt,_ = solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
                     τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
                     g_y, dx, dy, Nx, Ny,
                     dt, maxdisp; use_free_surface_stabilization=true,
@@ -444,7 +444,7 @@ Sets initial marker properties ρ_m and μ_m according to whether their coordina
 end
 
 
-#StokesFlow2D()
+StokesFlow2D()
 
 
 @testset "StokesFlow2D_gpu" begin

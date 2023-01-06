@@ -74,7 +74,7 @@ using Printf, Statistics
         @printf("Total steps = %d, err = %1.3e, time = %1.3e sec (@ T_eff = %1.2f GB/s) \n", niter, err, t2-t1, round(T_eff, sigdigits=2))
     end
 
-    return compute_dt(Vx,Vy,maxdisp,dx,dy)
+    return compute_dt(Vx,Vy,maxdisp,dx,dy), T_eff
 end
 
 
