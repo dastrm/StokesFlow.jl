@@ -8,7 +8,17 @@ else
 end
 using Plots, Printf, Statistics, Test, ImplicitGlobalGrid, MPI
 
-include("GlobalGather.jl")
+include("../GlobalGather.jl")
+
+# Unfortunately, the extended Vx and Vy arrays are difficult to handle with ImplicitGlobalGrid.
+# Since update_halo!(..) can only update the first and last entries in each dimension, even with a bigger overlap,
+# there have to be kept two separate arrays: First, the unpadded Vx / Vy arrays must be used for the iterations and
+# application of zero / no-flux BC.
+# (On padded arrays, the zero BC would be applied to indices 2 and end-1, which are not updated in update_halo!(...))
+# Then, the entire Vx / Vy arrays are copied into the padded arrays Vx_pad / Vy_pad, to which the artificial
+# 'zero second derivative' BC are applied, and a final halo update is performed to have these BC only valid at
+# the physical boundaries.
+# This is possible since these artificial BC are not relevant in the iterations, only for markers.
 
 @views function Stokes2D()
     # Physics
@@ -37,6 +47,8 @@ include("GlobalGather.jl")
     τyy   = @zeros(nx-1,ny-1) #p-nodes
     Vx    = @zeros(nx  ,ny+1)
     Vy    = @zeros(nx+1,ny  )
+    Vx_pad= @zeros(nx+2,ny+1)
+    Vy_pad= @zeros(nx+1,ny+2)
     τxy   = @zeros(nx  ,ny  )
 
     # *global* coordinates for points
@@ -46,12 +58,14 @@ include("GlobalGather.jl")
     y     = [(iy-1)*dy       + shifty for iy=1:ny  ]
     x_p   = [(ix-1)*dx+0.5dx + shiftx for ix=1:nx-1] # pressure nodes
     y_p   = [(iy-1)*dy+0.5dy + shifty for iy=1:ny-1]
-    x_vx  = x                                        # Vx nodes
+    x_vx  = [(ix-2)*dx       + shiftx for ix=1:nx+2] # Vx_pad nodes
     y_vx  = [(iy-1)*dy-0.5dy + shifty for iy=1:ny+1]
     x_vy  = [(ix-1)*dx-0.5dx + shiftx for ix=1:nx+1] # Vy nodes
-    y_vy  = y
+    y_vy  = [(iy-2)*dy       + shifty for iy=1:ny+2]
     x_τxy = x
     y_τxy = y
+    x_ρ  = x_vy
+    y_ρ  = y_vy[2:end-1]
 
     # set density & viscosity
     ρ_vy  = zeros(nx+1,ny  ) # on Vy-nodes
@@ -59,7 +73,7 @@ include("GlobalGather.jl")
     μ_p   = zeros(nx-1,ny-1) # on P-nodes (also τxx-, τyy-nodes)
     set_properties!(x_p  ,y_p  ,μ_p  ,plume_x,plume_y,plume_r,μ_matrix,μ_plume,μ_air,air_height) # viscosity: P-nodes
     set_properties!(x_τxy,y_τxy,μ_b,plume_x,plume_y,plume_r,μ_matrix,μ_plume,μ_air,air_height) # viscosity: τxy-nodes
-    set_properties!(x_vy ,y_vy ,ρ_vy ,plume_x,plume_y,plume_r,ρ_matrix,ρ_plume,ρ_air,air_height) # density: Vy-nodes
+    set_properties!(x_ρ ,y_ρ ,ρ_vy ,plume_x,plume_y,plume_r,ρ_matrix,ρ_plume,ρ_air,air_height) # density: Vy-nodes
     ρ_vy  = Data.Array(ρ_vy)
     μ_b   = Data.Array(μ_b)
     μ_p   = Data.Array(μ_p)
@@ -123,6 +137,7 @@ include("GlobalGather.jl")
         end
 
         if iter%ncheck == 0
+            if me == 0 @show iter; end
             dt_check = if use_free_surface_stabilization compute_dt(Vx,Vy,maxdisp,dx,dy,comm_cart) else 0.0 end
             @parallel compute_Residuals!(Rx, Ry, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, _dx, _dy, dt_check)
             err = compute_err(Rx,Ry,∇V,comm_cart)
@@ -149,8 +164,19 @@ include("GlobalGather.jl")
     display(plot(p1,p2,p5,p6))
     =#
 
+
+    # Since update_halo!() from ImplicitGlobalGrid can only update the first/last index in any dimension,
+    # there must be kept a separate array to apply the final "zero second derivative" BC on the physical domain boundaries.
+    # This artificial BC is necessary for the velocity interpolation to markers.
+    Vx_pad[2:end-1,:] .= Vx
+    Vy_pad[:,2:end-1] .= Vy
+    @parallel (1:size(Vx_pad,2)) bc_x_mirror!(Vx_pad)
+    @parallel (1:size(Vy_pad,1)) bc_y_mirror!(Vy_pad)
+    update_halo!(Vx_pad,Vy_pad)
+
+
     # Assemble the return values as if a single process computed them, for tests
-    Vx_glob, Vy_glob = gather_V_grid(Vx, Vy, me, dims, nx, ny)
+    Vx_glob, Vy_glob = gather_V_grid(Vx_pad, Vy_pad, me, dims, nx, ny)
 
     return Vx_glob, Vy_glob, me
 end
@@ -238,9 +264,13 @@ end
     return
 end
 
-@parallel function compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
-    @inn(Vx) = @inn(Vx) + @all(dτVx)*@all(dVxdτ)
-    @inn(Vy) = @inn(Vy) + @all(dτVy)*@all(dVydτ)
+@parallel_indices (ix,iy) function compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
+    if ix <= size(dτVx,1) && iy <= size(dτVx,2)
+        Vx[ix+1,iy+1] += dτVx[ix,iy]*dVxdτ[ix,iy]
+    end
+    if ix <= size(dτVy,1) && iy <= size(dτVy,2)
+        Vy[ix+1,iy+1] += dτVy[ix,iy]*dVydτ[ix,iy]
+    end
     return
 end
 
@@ -265,6 +295,11 @@ end
     A[end, iy] = A[end-1, iy]
     return
 end
+@parallel_indices (iy) function bc_x_mirror!(A::Data.Array)
+    A[1    , iy] = -A[3    , iy]
+    A[end  , iy] = -A[end-2, iy]
+    return
+end
 
 # horizontal boundaries
 @parallel_indices (ix) function bc_y_zero!(A::Data.Array)
@@ -277,7 +312,11 @@ end
     A[ix, end] = A[ix, end-1]
     return
 end
-
+@parallel_indices (ix) function bc_y_mirror!(A::Data.Array)
+    A[ix, 1    ] = -A[ix, 3    ]
+    A[ix, end  ] = -A[ix, end-2]
+    return
+end
 
 # This function sets material properties in arr depending on where the node is
 function set_properties!(x,y,arr,plume_x,plume_y,plume_r,matrix,plume,air,air_height)
@@ -302,17 +341,36 @@ end
 #Stokes2D()
 
 @testset "StokesPrototype_perf_multixpu" begin
-    Vx, Vy, me = Stokes2D() # with Nx = Ny = 127
+    Vx_pad, Vy_pad, me = Stokes2D()
+    #Vx_pad=zeros(130,129)
+    #Vy_pad=zeros(129,130)
+    #file1 = open("Vx.bin", "r"); read!(file1,Vx_pad); close(file1)
+    #file2 = open("Vy.bin", "r"); read!(file2,Vy_pad); close(file2)
     if me == 0
+        file1 = open("Vx.bin", "w"); write(file1,Vx_pad); close(file1)
+        file2 = open("Vy.bin", "w"); write(file2,Vy_pad); close(file2)
+        Vx = Vx_pad[2:end-1,:]
+        Vy = Vy_pad[:,2:end-1]
         indsx = [3, 56, 60, 90, 99]
         indsy = [28, 68, 95, 96, 127]
         #for 128
         refsX = [-0.000373876469043173 6.120752473121663e-5 0.0002498677059794664 0.000251348926303236 0.0002358467689351187; -0.0026742187793983778 0.0004811145094109683 0.0020862387835262355 0.0020227349629135093 0.0011391359661078273; -0.0014781851490752922 0.00025731679176657234 0.001161735099515982 0.0011256086730603463 0.0006194887382375581; 0.005089887264682815 -0.0012258858103647104 -0.003620961942064877 -0.003578997513610604 -0.0025228914211742714; 0.0046517289180049125 -0.0009190544653238568 -0.0031963990942699364 -0.0031853543718025727 -0.0025305417462321003]
         refsY = [0.0031532213462482487 0.006535231400713357 0.004058212387271903 0.0039325853053449825 0.00011776023426486187; -0.003916637021792955 -0.009819960410924776 -0.0048911370458988475 -0.004694334289078841 -0.0001220767841123651; -0.004427625391216983 -0.010917159694157135 -0.005529249053695152 -0.005291900591085923 -0.00013359141724855893; -0.0005647157062164232 0.000779628779556886 -0.0007757350484845383 -0.0007799400972699003 -3.321933611872913e-5; 0.001092219754275171 0.0034247829092759305 0.001293487417813752 0.0012241978296034105 2.414606025513269e-5]
-        #for 127
-        #refsX = [-0.00037740176256595914 6.714046038354702e-5 0.00025308827285352 0.00025441536351831996 0.00023890573893336602; -0.002592175411900232 0.0005020525259329576 0.0019509822422144605 0.0018969715666351265 0.0010950028140514069; -0.0013559074661861751 0.0002549196102522001 0.0010425458839549392 0.001009294888462192 0.0005616178216118598; 0.005118644439457764 -0.0012976498989358668 -0.003580674973359176 -0.0035410459393814256 -0.0025608227116031244; 0.004590773065094249 -0.000972901497461574 -0.003130724328322405 -0.0031198745457242235 -0.0025232813527596046]
-        #refsY = [0.00316821054109413 0.006524368487621358 0.003978255591168619 0.0038510995001933995 0.0; -0.004026809431748747 -0.009951698997411856 -0.004845877202480422 -0.004647055882448395 0.0; -0.004545379157896374 -0.010981561240649675 -0.0054485849911919335 -0.005213888559230767 0.0; -0.000398421923889966 0.0010221245300420553 -0.0005914086732068255 -0.000600005663732289 0.0; 0.001232186058094373 0.00359245103372998 0.001402707747374657 0.001330987051017147 0.0]
         @test all(isapprox.(refsX, Vx[indsx,indsy]; atol=1e-7))
         @test all(isapprox.(refsY, Vy[indsx,indsy]; atol=1e-7))
+        # BC of Vx
+        @test all(Vx_pad[1    ,:  ] .== -Vx_pad[3,:])
+        @test all(Vx_pad[2    ,:  ] .==  0.0)
+        @test all(Vx_pad[end  ,:  ] .== -Vx_pad[end-2,:])
+        @test all(Vx_pad[end-1,:  ] .==  0.0)
+        @test all(Vx_pad[:    ,1  ] .==  Vx_pad[:,2])
+        @test all(Vx_pad[:    ,end] .==  Vx_pad[:,end-1])
+        # BC of Vy
+        @test all(Vy_pad[:  ,1    ] .== -Vy_pad[:,3])
+        @test all(Vy_pad[:  ,2    ] .==  0.0)
+        @test all(Vy_pad[:  ,end  ] .== -Vy_pad[:,end-2])
+        @test all(Vy_pad[:  ,end-1] .==  0.0)
+        @test all(Vy_pad[1  ,:    ] .==  Vy_pad[2,:])
+        @test all(Vy_pad[end,:    ] .==  Vy_pad[end-1,:])
     end
 end

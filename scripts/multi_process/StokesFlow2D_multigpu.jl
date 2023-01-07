@@ -37,7 +37,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     lx, ly = 10, 10                             # global domain size
     lxl, lyl = lx / dims[1], ly / dims[2]       # local domain size
     μ_air, μ_matrix, μ_plume = 1e-2, 1e0, 1e-1  # Viscosity
-    ρ_air, ρ_matrix, ρ_plume = 1e-3, 3.3, 3.2   # Density, kg/m^3
+    ρ_air, ρ_matrix, ρ_plume = 1e-3, 3.3, 3.2   # Density
     plume_x, plume_y = lx / 2, ly / 2           # plume midpoint
     plume_r = ly / 5                            # plume radius
     air_height = 0.2 * ly                       # height of the 'sticky air' layer on top
@@ -61,10 +61,9 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     μ_m = zeros(Nm)                             # marker property: viscosity
 
     # grid array allocations
-    # maybe Vx & Vy sizes need adjustments for marker interpolation (multi-GPU case, simplify single GPU). TODO
     P = @zeros(Nx - 1, Ny - 1)
-    Vx = @zeros(Nx, Ny + 1)                     # Velocity in x-direction
-    Vy = @zeros(Nx + 1, Ny)                     # Velocity in y-direction
+    Vx = @zeros(Nx + 2, Ny + 1)                   # Velocity in x-direction
+    Vy = @zeros(Nx + 1, Ny + 2)                   # Velocity in y-direction
     ρ_vy = @zeros(Nx + 1, Ny)                   # Density on vy-nodes
     μ_b = @zeros(Nx, Ny)                        # Viscosity μ on basic nodes
     μ_p = @zeros(Nx - 1, Ny - 1)                # Viscosity μ on pressure nodes
@@ -81,6 +80,8 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     dVydτ = @zeros(Nx - 1, Ny - 2)
     dτVx = @zeros(Nx - 2, Ny - 1)
     dτVy = @zeros(Nx - 1, Ny - 2)
+    Vx_small = @zeros(Nx, Ny + 1) 
+    Vy_small = @zeros(Nx + 1, Ny)
 
     # additional arrays for marker -> grid interpolation
     interp_size = max.(size(ρ_vy), size(μ_b), size(μ_p)) # these represent the arrays that are filled by interpolation
@@ -92,15 +93,17 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     y = [(iy - 1) * dy for iy = 1:Ny]
     x_p = [(ix - 1) * dx + 0.5dx for ix = 1:Nx-1]  # pressure nodes
     y_p = [(iy - 1) * dy + 0.5dy for iy = 1:Ny-1]
-    x_vx = x                                       # Vx nodes
-    y_vx = [(iy - 1) * dy - 0.5dy for iy = 1:Ny+1]
-    x_vy = [(ix - 1) * dx - 0.5dx for ix = 1:Nx+1] # Vy nodes
-    y_vy = y
+    x_vx = [(ix-2)*dx       for ix=1:Nx+2] # Vx nodes
+    y_vx = [(iy-1)*dy-0.5dy for iy=1:Ny+1]
+    x_vy = [(ix-1)*dx-0.5dx for ix=1:Nx+1] # Vy nodes
+    y_vy = [(iy-2)*dy       for iy=1:Ny+2]
+    x_ρ  = x_vy                            # nodes for ρ: same as Vy, but smaller in y
+    y_ρ  = y_vy[2:end-1]
     # consistency checks
-    @assert size(x_p, 1) == size(P, 1) && size(y_p, 1) == size(P, 2)
-    @assert size(x_vx, 1) == size(Vx, 1) && size(y_vx, 1) == size(Vx, 2)
-    @assert size(x_vy, 1) == size(Vy, 1) && size(y_vy, 1) == size(Vy, 2)
-    @assert size(ρ_vy) == size(Vy)
+    @assert size(x_p ,1) == size(P   ,1) && size(y_p ,1) == size(P   ,2)
+    @assert size(x_vx,1) == size(Vx  ,1) && size(y_vx,1) == size(Vx  ,2)
+    @assert size(x_vy,1) == size(Vy  ,1) && size(y_vy,1) == size(Vy  ,2)
+    @assert size(x_ρ,1)  == size(ρ_vy,1) && size(y_ρ ,1) == size(ρ_vy,2)
 
     # --- INITIAL CONDITIONS ---
     setInitialMarkerCoords!(x_m, y_m, Nmx, Nmy, x, y, RAND_MARKER_POS::Bool)
@@ -129,19 +132,19 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
         # interpolate material properties to grid
         t1 = @elapsed begin
             # TODO: multi-xpu interpolation
-            bilinearMarkerToGrid!(x_vy[1], y_vy[1], ρ_vy, x_m, y_m, ρ_m, dx, dy, val_wt_sum, wt_sum)
+            bilinearMarkerToGrid!(x_ρ[1], y_ρ[1], ρ_vy, x_m, y_m, ρ_m, dx, dy, val_wt_sum, wt_sum)
             bilinearMarkerToGrid!(x[1], y[1], μ_b, x_m, y_m, μ_m, dx, dy, val_wt_sum, wt_sum)
             bilinearMarkerToGrid!(x_p[1], y_p[1], μ_p, x_m, y_m, μ_m, dx, dy, val_wt_sum, wt_sum)
         end
 
         # calculate velocities on grid
         t2 = @elapsed begin
-            dt = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
-                τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
-                g_y, dx, dy, Nx, Ny,
-                dt, maxdisp, comm_cart; use_free_surface_stabilization=true,
-                ϵ=1e-5,
-                print_info=print_info && rank == 0)
+            dt,_ = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
+                    τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_small, Vy_small,
+                    g_y, dx, dy, Nx, Ny,
+                    dt, maxdisp, comm_cart; use_free_surface_stabilization=true,
+                    ϵ=1e-5,
+                    print_info=print_info && rank == 0)
         end
 
         # move markers
@@ -209,40 +212,28 @@ Interpolates grid velocities to 2D positions
 function interpolateV(x, y, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dx, dy)
     # Interpolate Vx
     ix, iy, dxij, dyij = topleftIndexRelDist(x_vx_min, y_vx_min, x, y, dx, dy)
-    #index range failsafe, in case advection moves the particles out of domain
-    if ix < 1
-        ix = 1
-        dxij = 0.0
-    end
-    if iy < 1
-        iy = 1
-        dyij = 0.0
-    end
-    if ix >= size(Vx, 1)
-        ix = size(Vx, 1) - 1
-        dxij = 1.0
-    end
-    if iy >= size(Vx, 2)
-        iy = size(Vx, 2) - 1
-        dyij = 1.0
-    end
+    #index range failsafe (that should never be used)
+    if ix < 2             @ps_println("WARNING: Vx-interpolation, ix=$(ix) too small"); ix=1           ; dxij=0.0; end
+    if iy < 1             @ps_println("WARNING: Vx-interpolation, iy=$(iy) too small"); iy=1           ; dyij=0.0; end
+    if ix >= size(Vx,1)-1 @ps_println("WARNING: Vx-interpolation, ix=$(ix) too big")  ; ix=size(Vx,1)-2; dxij=1.0; end
+    if iy >= size(Vx,2)   @ps_println("WARNING: Vx-interpolation, iy=$(iy) too big")  ; iy=size(Vx,2)-1; dyij=1.0; end
+    # bilinear Interpolation
     v1 = Vx[ix, iy]
     v2 = Vx[ix+1, iy]
     v3 = Vx[ix, iy+1]
     v4 = Vx[ix+1, iy+1]
     vx = bilinearInterp(v1, v2, v3, v4, dxij, dyij)
     # Continuity-based velocity correction for Vx: the interpolated field will have zero divergence!
-    # TODO: no correction if too close to boundary: Vx and Vy arrays must have more ghost cells for multi-GPU!
     correction = 0.0
     # right half of cell => extend stencil to the right
-    if dxij > 0.5 && ix + 2 <= size(Vx, 1)
+    if dxij >= 0.5
         v5 = Vx[ix+2, iy]
         v6 = Vx[ix+2, iy+1]
         correction = 0.5 * (dxij - 0.5)^2 * (
                          (1 - dyij) * (v1 - 2v2 + v5) +
                          dyij * (v3 - 2v4 + v6))
         # left  half of cell => extend stencil to the left
-    elseif dxij < 0.5 && ix - 1 >= 1
+    else
         v5 = Vx[ix-1, iy]
         v6 = Vx[ix-1, iy+1]
         correction = 0.5 * (dxij - 0.5)^2 * (
@@ -253,40 +244,28 @@ function interpolateV(x, y, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dx, 
 
     # Interpolate Vy
     ix, iy, dxij, dyij = topleftIndexRelDist(x_vy_min, y_vy_min, x, y, dx, dy)
-    #index range failsafe, in case advection moves the particles out of domain
-    if ix < 1
-        ix = 1
-        dxij = 0.0
-    end
-    if iy < 1
-        iy = 1
-        dyij = 0.0
-    end
-    if ix >= size(Vy, 1)
-        ix = size(Vy, 1) - 1
-        dxij = 1.0
-    end
-    if iy >= size(Vy, 2)
-        iy = size(Vy, 2) - 1
-        dyij = 1.0
-    end
+    #index range failsafe (that should never be used)
+    if ix < 1             @ps_println("WARNING: Vy-interpolation, ix=$(ix) too small"); ix=1           ; dxij=0.0; end
+    if iy < 2             @ps_println("WARNING: Vy-interpolation, iy=$(iy) too small"); iy=1           ; dyij=0.0; end
+    if ix >= size(Vy,1)   @ps_println("WARNING: Vy-interpolation, ix=$(ix) too big")  ; ix=size(Vy,1)-1; dxij=1.0; end
+    if iy >= size(Vy,2)-1 @ps_println("WARNING: Vy-interpolation, iy=$(iy) too big")  ; iy=size(Vy,2)-2; dyij=1.0; end
+    # bilinear Interpolation
     v1 = Vy[ix, iy]
     v2 = Vy[ix+1, iy]
     v3 = Vy[ix, iy+1]
     v4 = Vy[ix+1, iy+1]
     vy = bilinearInterp(v1, v2, v3, v4, dxij, dyij)
     # Continuity-based velocity correction for Vy: the interpolated field will have zero divergence!
-    # TODO: no correction if too close to boundary: Vx and Vy arrays must have more ghost cells for multi-GPU!
     correction = 0.0
     # lower half of cell => extend stencil to the bottom
-    if dyij > 0.5 && iy + 2 <= size(Vy, 2)
+    if dyij >= 0.5
         v5 = Vy[ix, iy+2]
         v6 = Vy[ix+1, iy+2]
         correction = 0.5 * (dyij - 0.5)^2 * (
                          (1 - dxij) * (v1 - 2v3 + v5) +
                          dxij * (v2 - 2v4 + v6))
         # upper half of cell => extend stencil to the top
-    elseif dyij < 0.5 && iy - 1 >= 1
+    else
         v5 = Vy[ix, iy-1]
         v6 = Vy[ix+1, iy-1]
         correction = 0.5 * (dyij - 0.5)^2 * (
@@ -788,13 +767,3 @@ Exchanges markers outside of local boundaries to respective neighbouring ranks
 end
 
 StokesFlow2D()
-
-#@testset "StokesFlow2D_gpu" begin
-#    nt = 10
-#    nx, ny = 35, 45
-#    # tests should not depend on a rng seed, see the Warning at https://docs.julialang.org/en/v1/stdlib/Random/
-#    result = StokesFlow2D(; Nt=nt, Nx=nx, Ny=ny, RAND_MARKER_POS=false, do_plot=false, print_info=false)
-#    inds = [181, 219, 388, 444, 637, 920, 1049, 1074, 1223, 1367]
-#    refs = [0.04974145217766237, -0.03512273865731893, -0.14844495700026145, 0.4927706169377982, -0.1486118118461089, 0.21083507100494975, -0.03009881585240687, -0.20891915972705769, -0.05836431607719553, 0.025274386167270724]
-#    @test all(isapprox.(refs, result[inds]; atol=1e-4))
-#end

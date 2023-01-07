@@ -2,12 +2,9 @@
 using Printf, Statistics, ParallelStencil, ImplicitGlobalGrid, MPI
 
 # STOKES SOLVER
-# Currently this is just:
-# - copy-paste from StokesSolver_prototype.jl
-#   with free surface stabilization (using the density implicitly advected to the next timestep)
-#   This is done to avoid oscillations of the free surface.
-@views function solveStokes!(P,Vx,Vy,ρ_vy,μ_b,μ_p,
-                            τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
+# Vx_s & Vy_s denotes the 'small' (unpadded) arrays, Vx_pad, Vy_pad are padded.
+@views function solveStokes!(P,Vx_pad,Vy_pad,ρ_vy,μ_b,μ_p,
+                            τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_s, Vy_s,
                             g_y, dx, dy, Nx, Ny,
                             dt, maxdisp, comm; use_free_surface_stabilization::Bool=true,
                             ϵ=1e-8,
@@ -34,33 +31,32 @@ using Printf, Statistics, ParallelStencil, ImplicitGlobalGrid, MPI
     ncheck    = min(5*min(Nx,Ny),2000)
     ndtupdate = 10*min(Nx,Ny)
     t1 = 0; itert1 = 11
-    #ϵ = 0.01 # tol
-    err_evo1=[]; err_evo2=[]
+    #err_evo1=[]; err_evo2=[]
     err = 2ϵ; iter=1; niter=0; iterMax=100000
     while err > ϵ && iter <= iterMax
         if (iter==itert1) t1 = Base.time() end
 
-        @parallel compute_P_τ!(∇V, P, Vx, Vy, dτPt, τxx, τyy, τxy, μ_p, μ_b, _dx, _dy)
-        @parallel compute_dV!(dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, _dx, _dy, dt)
+        @parallel compute_P_τ!(∇V, P, Vx_s, Vy_s, dτPt, τxx, τyy, τxy, μ_p, μ_b, _dx, _dy)
+        @parallel compute_dV!(dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, Vx_s, Vy_s, g_y, dampX, dampY, _dx, _dy, dt)
         @hide_communication (8,8) begin
-            @parallel compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
+            @parallel compute_V!(Vx_s, Vy_s, dVxdτ, dVydτ, dτVx, dτVy)
             # Free slip BC
-            @parallel (1:size(Vx,1)) bc_y_noflux!(Vx)
-            @parallel (1:size(Vx,2)) bc_x_zero!(Vx)
-            @parallel (1:size(Vy,1)) bc_y_zero!(Vy)
-            @parallel (1:size(Vy,2)) bc_x_noflux!(Vy)
-            update_halo!(Vx,Vy)
+            @parallel (1:size(Vx_s,1)) bc_y_noflux!(Vx_s)
+            @parallel (1:size(Vx_s,2)) bc_x_zero!(Vx_s)
+            @parallel (1:size(Vy_s,1)) bc_y_zero!(Vy_s)
+            @parallel (1:size(Vy_s,2)) bc_x_noflux!(Vy_s)
+            update_halo!(Vx_s,Vy_s)
         end
 
         if use_free_surface_stabilization && (iter%ndtupdate == 0)
-            dt = compute_dt(Vx,Vy,maxdisp,dx,dy,comm)
+            dt = compute_dt(Vx_s,Vy_s,maxdisp,dx,dy,comm)
         end
 
         if iter%ncheck == 0
-            dt_check = if use_free_surface_stabilization compute_dt(Vx,Vy,maxdisp,dx,dy,comm) else 0.0 end
-            @parallel compute_Residuals!(Rx, Ry, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, _dx, _dy, dt_check)
+            dt_check = if use_free_surface_stabilization compute_dt(Vx_s,Vy_s,maxdisp,dx,dy,comm) else 0.0 end
+            @parallel compute_Residuals!(Rx, Ry, P, ρ_vy, τxx, τyy, τxy, Vx_s, Vy_s, g_y, _dx, _dy, dt_check)
             err = compute_err(Rx,Ry,∇V,comm)
-            push!(err_evo1, err); push!(err_evo2,iter)
+            #push!(err_evo1, err); push!(err_evo2,iter)
             #@printf("Total steps = %d, err = %1.3e [mean_Rx=%1.3e, mean_Ry=%1.3e, mean_∇V=%1.3e] \n", iter, err, mean_Rx, mean_Ry, mean_∇V)
         end
 
@@ -74,7 +70,16 @@ using Printf, Statistics, ParallelStencil, ImplicitGlobalGrid, MPI
         @printf("Total steps = %d, err = %1.3e, time = %1.3e sec (@ T_eff = %1.2f GB/s) \n", niter, err, t2-t1, round(T_eff, sigdigits=2))
     end
 
-    return compute_dt(Vx,Vy,maxdisp,dx,dy,comm)
+    # Since update_halo!() from ImplicitGlobalGrid can only update the first/last index in any dimension,
+    # there must be kept a separate array to apply the final "zero second derivative" BC on the physical domain boundaries.
+    # This artificial BC is necessary for the velocity interpolation to markers.
+    Vx_pad[2:end-1,:] .= Vx_s
+    Vy_pad[:,2:end-1] .= Vy_s
+    @parallel (1:size(Vx_pad,2)) bc_x_mirror!(Vx_pad)
+    @parallel (1:size(Vy_pad,1)) bc_y_mirror!(Vy_pad)
+    update_halo!(Vx_pad,Vy_pad)
+
+    return compute_dt(Vx_s,Vy_s,maxdisp,dx,dy,comm), T_eff
 end
 
 function compute_err(Rx,Ry,∇V,comm)
@@ -158,9 +163,13 @@ end
     return
 end
 
-@parallel function compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
-    @inn(Vx) = @inn(Vx) + @all(dτVx)*@all(dVxdτ)
-    @inn(Vy) = @inn(Vy) + @all(dτVy)*@all(dVydτ)
+@parallel_indices (ix,iy) function compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
+    if ix <= size(dτVx,1) && iy <= size(dτVx,2)
+        Vx[ix+1,iy+1] += dτVx[ix,iy]*dVxdτ[ix,iy]
+    end
+    if ix <= size(dτVy,1) && iy <= size(dτVy,2)
+        Vy[ix+1,iy+1] += dτVy[ix,iy]*dVydτ[ix,iy]
+    end
     return
 end
 
@@ -185,6 +194,11 @@ end
     A[end, iy] = A[end-1, iy]
     return
 end
+@parallel_indices (iy) function bc_x_mirror!(A::Data.Array)
+    A[1    , iy] = -A[3    , iy]
+    A[end  , iy] = -A[end-2, iy]
+    return
+end
 
 # horizontal boundaries
 @parallel_indices (ix) function bc_y_zero!(A::Data.Array)
@@ -195,5 +209,10 @@ end
 @parallel_indices (ix) function bc_y_noflux!(A::Data.Array)
     A[ix, 1  ] = A[ix, 2    ]
     A[ix, end] = A[ix, end-1]
+    return
+end
+@parallel_indices (ix) function bc_y_mirror!(A::Data.Array)
+    A[ix, 1    ] = -A[ix, 3    ]
+    A[ix, end  ] = -A[ix, end-2]
     return
 end
