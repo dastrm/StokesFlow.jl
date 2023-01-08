@@ -24,7 +24,9 @@ print_info      : whether any info is printed to console
 Output: Currently just Vy, an array of size (Nx, Ny+1)
 """
 @views function StokesFlow2D(; Nt=20, Nx=35, Ny=45, RAND_MARKER_POS::Bool=true, do_plot::Bool=true, print_info::Bool=true)
+
     rank, dims, nprocs, coords, comm_cart = init_global_grid(Nx, Ny, 1)
+    grid = ImplicitGlobalGrid.get_global_grid()
 
     ENV["GKSwstype"] = "nul"
     (rank == 0) && (!isdir("viz_out")) && mkdir("viz_out")
@@ -131,10 +133,9 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
         # interpolate material properties to grid
         t1 = @elapsed begin
-            # TODO: multi-xpu interpolation
-            bilinearMarkerToGrid!(x_ρ[1], y_ρ[1], ρ_vy, x_m, y_m, ρ_m, dx, dy, val_wt_sum, wt_sum)
-            bilinearMarkerToGrid!(x[1], y[1], μ_b, x_m, y_m, μ_m, dx, dy, val_wt_sum, wt_sum)
-            bilinearMarkerToGrid!(x_p[1], y_p[1], μ_p, x_m, y_m, μ_m, dx, dy, val_wt_sum, wt_sum)
+            bilinearMarkerToGrid!(x_ρ[1], y_ρ[1], ρ_vy, x_m, y_m, ρ_m, dx, dy, val_wt_sum, wt_sum, grid)
+            bilinearMarkerToGrid!(x[1], y[1], μ_b, x_m, y_m, μ_m, dx, dy, val_wt_sum, wt_sum, grid)
+            bilinearMarkerToGrid!(x_p[1], y_p[1], μ_p, x_m, y_m, μ_m, dx, dy, val_wt_sum, wt_sum, grid)
         end
 
         # calculate velocities on grid
@@ -343,12 +344,11 @@ Compute indices `ix`, `iy` of the top left node with respect to the given 2D pos
 end
 
 """
-    bilinearMarkerToGrid!(x_grid_min, y_grid_min, val_grid, x_m, y_m, val_m, dx, dy, val_wt_sum, wt_sum)
+    bilinearMarkerToGrid!(x_grid_min, y_grid_min, val_grid, x_m, y_m, val_m, dx, dy, val_wt_sum, wt_sum, grid::::ImplicitGlobalGrid.GlobalGrid)
 
 Interpolates markers to grid points
 """
-# TODO: multi-xpu interpolation
-@views function bilinearMarkerToGrid!(x_grid_min, y_grid_min, val_grid, x_m, y_m, val_m, dx, dy, val_wt_sum, wt_sum)
+@views function bilinearMarkerToGrid!(x_grid_min, y_grid_min, val_grid, x_m, y_m, val_m, dx, dy, val_wt_sum, wt_sum, grid::ImplicitGlobalGrid.GlobalGrid)
 
     Nx, Ny = size(val_grid)
     Nm = size(x_m, 1)
@@ -359,6 +359,10 @@ Interpolates markers to grid points
 
     # interpolate by summing up the marker contributions to global arrays
     @parallel (1:Nm) atomicAddInterpolation(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy)
+
+    # perform reduction on boundaries
+    sum_up_overlapping_values!(wt_sum    , grid)
+    sum_up_overlapping_values!(val_wt_sum, grid)
 
     # finally compute actual value from the sums
     @parallel (1:Nx, 1:Ny) safeDivision(val_grid, Data.Array(val_wt_sum), Data.Array(wt_sum))
@@ -429,6 +433,76 @@ Performs division and warns about zero denominator
         @ps_println("PROBLEM: no markers close enough for value interpolation at node: ix = ", ix, ", iy = ", iy)
     end
     return nothing
+end
+
+"""
+    sum_up_overlapping_values!(A::Data.Array, grid::ImplicitGlobalGrid.GlobalGrid)
+
+Sums up all values of the local array A that are overlapping in the global grid.
+Results are stored back in the corresponding entries of A.
+
+Implementation is not particularly efficient (especially memory-wise),
+but enough since it is not called very often.
+"""
+function sum_up_overlapping_values!(A::Data.Array, grid::ImplicitGlobalGrid.GlobalGrid)
+
+    nb = grid.neighbors
+    comm_cart = grid.comm
+
+    ox = grid.overlaps[1] + size(A,1) - grid.nxyz[1]
+    oy = grid.overlaps[2] + size(A,2) - grid.nxyz[2]
+    
+    @assert 2*ox <= size(A,1) && 2*oy <= size(A,2) "Total overlap is bigger than Array itself"
+    
+    # receive buffers
+    recv_buf_x_lr = zeros(ox,size(A,2))
+    recv_buf_x_rl = zeros(ox,size(A,2))
+    recv_buf_y_down = zeros(size(A,1),oy)
+    recv_buf_y_up = zeros(size(A,1),oy)
+    
+    # neighbors
+    below = nb[2,2]
+    above = nb[1,2]
+    right = nb[2,1]
+    left  = nb[1,1]
+    
+    # prepare requests
+    reqs = fill(MPI.REQUEST_NULL, 4);
+    
+    # compute the sums: first in x, then in y. must be separate for correct results in corners.
+    # exchange in x-direction
+    if ox > 0
+        # receive
+        if (left  != MPI.MPI_PROC_NULL) reqs[1] = MPI.Irecv!(recv_buf_x_lr,left ,13,comm_cart); end
+        if (right != MPI.MPI_PROC_NULL) reqs[2] = MPI.Irecv!(recv_buf_x_rl,right,23,comm_cart); end
+        # send
+        if (right != MPI.MPI_PROC_NULL) reqs[3] = MPI.Isend(Array(A[end-ox+1:end,:]),right,13,comm_cart); end
+        if (left  != MPI.MPI_PROC_NULL) reqs[4] = MPI.Isend(Array(A[1:ox        ,:]),left ,23,comm_cart); end
+        # wait
+        if any(reqs .!= [MPI.REQUEST_NULL]) MPI.Waitall!(reqs); end
+        # update
+        if (left  != MPI.MPI_PROC_NULL) A[1:ox        ,:] .+= Data.Array(recv_buf_x_lr); end
+        if (right != MPI.MPI_PROC_NULL) A[end-ox+1:end,:] .+= Data.Array(recv_buf_x_rl); end
+    end
+    
+    # exchange in y-direction
+    if oy > 0
+        # prepare requests
+        fill!(reqs,MPI.REQUEST_NULL)
+        # receive
+        if (above != MPI.MPI_PROC_NULL) reqs[1] = MPI.Irecv!(recv_buf_y_down,above,7 ,comm_cart); end
+        if (below != MPI.MPI_PROC_NULL) reqs[2] = MPI.Irecv!(recv_buf_y_up  ,below,17,comm_cart); end
+        #send
+        if (below != MPI.MPI_PROC_NULL) reqs[3] = MPI.Isend(Array(A[:,end-oy+1:end]),below,7 ,comm_cart); end
+        if (above != MPI.MPI_PROC_NULL) reqs[4] = MPI.Isend(Array(A[:,1:oy        ]),above,17,comm_cart); end
+        # wait
+        if any(reqs .!= [MPI.REQUEST_NULL]) MPI.Waitall!(reqs); end
+        # update
+        if (above != MPI.MPI_PROC_NULL) A[:,1:oy        ] .+= Data.Array(recv_buf_y_down); end
+        if (below != MPI.MPI_PROC_NULL) A[:,end-oy+1:end] .+= Data.Array(recv_buf_y_up  ); end
+    end
+
+    return
 end
 
 """
