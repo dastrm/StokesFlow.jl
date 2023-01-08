@@ -82,7 +82,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     dVydτ = @zeros(Nx - 1, Ny - 2)
     dτVx = @zeros(Nx - 2, Ny - 1)
     dτVy = @zeros(Nx - 1, Ny - 2)
-    Vx_small = @zeros(Nx, Ny + 1) 
+    Vx_small = @zeros(Nx, Ny + 1)
     Vy_small = @zeros(Nx + 1, Ny)
 
     # additional arrays for marker -> grid interpolation
@@ -95,21 +95,23 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     y = [(iy - 1) * dy for iy = 1:Ny]
     x_p = [(ix - 1) * dx + 0.5dx for ix = 1:Nx-1]  # pressure nodes
     y_p = [(iy - 1) * dy + 0.5dy for iy = 1:Ny-1]
-    x_vx = [(ix-2)*dx       for ix=1:Nx+2] # Vx nodes
-    y_vx = [(iy-1)*dy-0.5dy for iy=1:Ny+1]
-    x_vy = [(ix-1)*dx-0.5dx for ix=1:Nx+1] # Vy nodes
-    y_vy = [(iy-2)*dy       for iy=1:Ny+2]
-    x_ρ  = x_vy                            # nodes for ρ: same as Vy, but smaller in y
-    y_ρ  = y_vy[2:end-1]
+    x_vx = [(ix - 2) * dx for ix = 1:Nx+2] # Vx nodes
+    y_vx = [(iy - 1) * dy - 0.5dy for iy = 1:Ny+1]
+    x_vy = [(ix - 1) * dx - 0.5dx for ix = 1:Nx+1] # Vy nodes
+    y_vy = [(iy - 2) * dy for iy = 1:Ny+2]
+    x_ρ = x_vy                            # nodes for ρ: same as Vy, but smaller in y
+    y_ρ = y_vy[2:end-1]
     # consistency checks
-    @assert size(x_p ,1) == size(P   ,1) && size(y_p ,1) == size(P   ,2)
-    @assert size(x_vx,1) == size(Vx  ,1) && size(y_vx,1) == size(Vx  ,2)
-    @assert size(x_vy,1) == size(Vy  ,1) && size(y_vy,1) == size(Vy  ,2)
-    @assert size(x_ρ,1)  == size(ρ_vy,1) && size(y_ρ ,1) == size(ρ_vy,2)
+    @assert size(x_p, 1) == size(P, 1) && size(y_p, 1) == size(P, 2)
+    @assert size(x_vx, 1) == size(Vx, 1) && size(y_vx, 1) == size(Vx, 2)
+    @assert size(x_vy, 1) == size(Vy, 1) && size(y_vy, 1) == size(Vy, 2)
+    @assert size(x_ρ, 1) == size(ρ_vy, 1) && size(y_ρ, 1) == size(ρ_vy, 2)
 
     # --- INITIAL CONDITIONS ---
     setInitialMarkerCoords!(x_m, y_m, Nmx, Nmy, x, y, RAND_MARKER_POS::Bool)
     setInitialMarkerProperties!(coords, lxl, lyl, x_m, y_m, ρ_m, μ_m, Nm, μ_air, μ_matrix, μ_plume, ρ_air, ρ_matrix, ρ_plume, plume_x, plume_y, plume_r, air_height)
+    # TODO: exchangeMarkers here not necessary anymore once setInitialMarkerCoords is correct
+    x_m, y_m, ρ_m, μ_m = exchangeMarkers!(comm_cart, dims, [lxl, lyl], dx, dy, Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m))
     if do_plot
         (rank == 0) && saveStats!(dims, Nt)
         saveMarkers!(0, rank, coords, [lxl, lyl], x_m, y_m, ρ_m)
@@ -140,12 +142,12 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
         # calculate velocities on grid
         t2 = @elapsed begin
-            dt,_ = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
-                    τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_small, Vy_small,
-                    g_y, dx, dy, Nx, Ny,
-                    dt, maxdisp, comm_cart; use_free_surface_stabilization=true,
-                    ϵ=1e-5,
-                    print_info=print_info && rank == 0)
+            dt, _ = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
+                τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_small, Vy_small,
+                g_y, dx, dy, Nx, Ny,
+                dt, maxdisp, comm_cart; use_free_surface_stabilization=true,
+                ϵ=1e-5,
+                print_info=print_info && rank == 0)
         end
 
         # move markers
@@ -155,7 +157,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
         # exchange markers
         t4 = @elapsed begin
-            x_m, y_m, ρ_m, μ_m = exchangeMarkers!(comm_cart, dims, [lxl, lyl], Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m))
+            x_m, y_m, ρ_m, μ_m = exchangeMarkers!(comm_cart, dims, [lxl, lyl], dx, dy, Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m))
             # transform marker arrays to xPU arrays
             x_m = Data.Array(x_m)
             y_m = Data.Array(y_m)
@@ -214,10 +216,26 @@ function interpolateV(x, y, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dx, 
     # Interpolate Vx
     ix, iy, dxij, dyij = topleftIndexRelDist(x_vx_min, y_vx_min, x, y, dx, dy)
     #index range failsafe (that should never be used)
-    if ix < 2             @ps_println("WARNING: Vx-interpolation, ix=$(ix) too small"); ix=1           ; dxij=0.0; end
-    if iy < 1             @ps_println("WARNING: Vx-interpolation, iy=$(iy) too small"); iy=1           ; dyij=0.0; end
-    if ix >= size(Vx,1)-1 @ps_println("WARNING: Vx-interpolation, ix=$(ix) too big")  ; ix=size(Vx,1)-2; dxij=1.0; end
-    if iy >= size(Vx,2)   @ps_println("WARNING: Vx-interpolation, iy=$(iy) too big")  ; iy=size(Vx,2)-1; dyij=1.0; end
+    if ix < 2
+        @ps_println("WARNING: Vx-interpolation, ix=$(ix) too small")
+        ix = 1
+        dxij = 0.0
+    end
+    if iy < 1
+        @ps_println("WARNING: Vx-interpolation, iy=$(iy) too small")
+        iy = 1
+        dyij = 0.0
+    end
+    if ix >= size(Vx, 1) - 1
+        @ps_println("WARNING: Vx-interpolation, ix=$(ix) too big")
+        ix = size(Vx, 1) - 2
+        dxij = 1.0
+    end
+    if iy >= size(Vx, 2)
+        @ps_println("WARNING: Vx-interpolation, iy=$(iy) too big")
+        iy = size(Vx, 2) - 1
+        dyij = 1.0
+    end
     # bilinear Interpolation
     v1 = Vx[ix, iy]
     v2 = Vx[ix+1, iy]
@@ -246,10 +264,26 @@ function interpolateV(x, y, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dx, 
     # Interpolate Vy
     ix, iy, dxij, dyij = topleftIndexRelDist(x_vy_min, y_vy_min, x, y, dx, dy)
     #index range failsafe (that should never be used)
-    if ix < 1             @ps_println("WARNING: Vy-interpolation, ix=$(ix) too small"); ix=1           ; dxij=0.0; end
-    if iy < 2             @ps_println("WARNING: Vy-interpolation, iy=$(iy) too small"); iy=1           ; dyij=0.0; end
-    if ix >= size(Vy,1)   @ps_println("WARNING: Vy-interpolation, ix=$(ix) too big")  ; ix=size(Vy,1)-1; dxij=1.0; end
-    if iy >= size(Vy,2)-1 @ps_println("WARNING: Vy-interpolation, iy=$(iy) too big")  ; iy=size(Vy,2)-2; dyij=1.0; end
+    if ix < 1
+        @ps_println("WARNING: Vy-interpolation, ix=$(ix) too small")
+        ix = 1
+        dxij = 0.0
+    end
+    if iy < 2
+        @ps_println("WARNING: Vy-interpolation, iy=$(iy) too small")
+        iy = 1
+        dyij = 0.0
+    end
+    if ix >= size(Vy, 1)
+        @ps_println("WARNING: Vy-interpolation, ix=$(ix) too big")
+        ix = size(Vy, 1) - 1
+        dxij = 1.0
+    end
+    if iy >= size(Vy, 2) - 1
+        @ps_println("WARNING: Vy-interpolation, iy=$(iy) too big")
+        iy = size(Vy, 2) - 2
+        dyij = 1.0
+    end
     # bilinear Interpolation
     v1 = Vy[ix, iy]
     v2 = Vy[ix+1, iy]
@@ -361,7 +395,7 @@ Interpolates markers to grid points
     @parallel (1:Nm) atomicAddInterpolation(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy)
 
     # perform reduction on boundaries
-    sum_up_overlapping_values!(wt_sum    , grid)
+    sum_up_overlapping_values!(wt_sum, grid)
     sum_up_overlapping_values!(val_wt_sum, grid)
 
     # finally compute actual value from the sums
@@ -449,57 +483,85 @@ function sum_up_overlapping_values!(A::Data.Array, grid::ImplicitGlobalGrid.Glob
     nb = grid.neighbors
     comm_cart = grid.comm
 
-    ox = grid.overlaps[1] + size(A,1) - grid.nxyz[1]
-    oy = grid.overlaps[2] + size(A,2) - grid.nxyz[2]
-    
-    @assert 2*ox <= size(A,1) && 2*oy <= size(A,2) "Total overlap is bigger than Array itself"
-    
+    ox = grid.overlaps[1] + size(A, 1) - grid.nxyz[1]
+    oy = grid.overlaps[2] + size(A, 2) - grid.nxyz[2]
+
+    @assert 2 * ox <= size(A, 1) && 2 * oy <= size(A, 2) "Total overlap is bigger than Array itself"
+
     # receive buffers
-    recv_buf_x_lr = zeros(ox,size(A,2))
-    recv_buf_x_rl = zeros(ox,size(A,2))
-    recv_buf_y_down = zeros(size(A,1),oy)
-    recv_buf_y_up = zeros(size(A,1),oy)
-    
+    recv_buf_x_lr = zeros(ox, size(A, 2))
+    recv_buf_x_rl = zeros(ox, size(A, 2))
+    recv_buf_y_down = zeros(size(A, 1), oy)
+    recv_buf_y_up = zeros(size(A, 1), oy)
+
     # neighbors
-    below = nb[2,2]
-    above = nb[1,2]
-    right = nb[2,1]
-    left  = nb[1,1]
-    
+    below = nb[2, 2]
+    above = nb[1, 2]
+    right = nb[2, 1]
+    left = nb[1, 1]
+
     # prepare requests
-    reqs = fill(MPI.REQUEST_NULL, 4);
-    
+    reqs = fill(MPI.REQUEST_NULL, 4)
+
     # compute the sums: first in x, then in y. must be separate for correct results in corners.
     # exchange in x-direction
     if ox > 0
         # receive
-        if (left  != MPI.MPI_PROC_NULL) reqs[1] = MPI.Irecv!(recv_buf_x_lr,left ,13,comm_cart); end
-        if (right != MPI.MPI_PROC_NULL) reqs[2] = MPI.Irecv!(recv_buf_x_rl,right,23,comm_cart); end
+        if (left != MPI.MPI_PROC_NULL)
+            reqs[1] = MPI.Irecv!(recv_buf_x_lr, left, 13, comm_cart)
+        end
+        if (right != MPI.MPI_PROC_NULL)
+            reqs[2] = MPI.Irecv!(recv_buf_x_rl, right, 23, comm_cart)
+        end
         # send
-        if (right != MPI.MPI_PROC_NULL) reqs[3] = MPI.Isend(Array(A[end-ox+1:end,:]),right,13,comm_cart); end
-        if (left  != MPI.MPI_PROC_NULL) reqs[4] = MPI.Isend(Array(A[1:ox        ,:]),left ,23,comm_cart); end
+        if (right != MPI.MPI_PROC_NULL)
+            reqs[3] = MPI.Isend(Array(A[end-ox+1:end, :]), right, 13, comm_cart)
+        end
+        if (left != MPI.MPI_PROC_NULL)
+            reqs[4] = MPI.Isend(Array(A[1:ox, :]), left, 23, comm_cart)
+        end
         # wait
-        if any(reqs .!= [MPI.REQUEST_NULL]) MPI.Waitall!(reqs); end
+        if any(reqs .!= [MPI.REQUEST_NULL])
+            MPI.Waitall!(reqs)
+        end
         # update
-        if (left  != MPI.MPI_PROC_NULL) A[1:ox        ,:] .+= Data.Array(recv_buf_x_lr); end
-        if (right != MPI.MPI_PROC_NULL) A[end-ox+1:end,:] .+= Data.Array(recv_buf_x_rl); end
+        if (left != MPI.MPI_PROC_NULL)
+            A[1:ox, :] .+= Data.Array(recv_buf_x_lr)
+        end
+        if (right != MPI.MPI_PROC_NULL)
+            A[end-ox+1:end, :] .+= Data.Array(recv_buf_x_rl)
+        end
     end
-    
+
     # exchange in y-direction
     if oy > 0
         # prepare requests
-        fill!(reqs,MPI.REQUEST_NULL)
+        fill!(reqs, MPI.REQUEST_NULL)
         # receive
-        if (above != MPI.MPI_PROC_NULL) reqs[1] = MPI.Irecv!(recv_buf_y_down,above,7 ,comm_cart); end
-        if (below != MPI.MPI_PROC_NULL) reqs[2] = MPI.Irecv!(recv_buf_y_up  ,below,17,comm_cart); end
+        if (above != MPI.MPI_PROC_NULL)
+            reqs[1] = MPI.Irecv!(recv_buf_y_down, above, 7, comm_cart)
+        end
+        if (below != MPI.MPI_PROC_NULL)
+            reqs[2] = MPI.Irecv!(recv_buf_y_up, below, 17, comm_cart)
+        end
         #send
-        if (below != MPI.MPI_PROC_NULL) reqs[3] = MPI.Isend(Array(A[:,end-oy+1:end]),below,7 ,comm_cart); end
-        if (above != MPI.MPI_PROC_NULL) reqs[4] = MPI.Isend(Array(A[:,1:oy        ]),above,17,comm_cart); end
+        if (below != MPI.MPI_PROC_NULL)
+            reqs[3] = MPI.Isend(Array(A[:, end-oy+1:end]), below, 7, comm_cart)
+        end
+        if (above != MPI.MPI_PROC_NULL)
+            reqs[4] = MPI.Isend(Array(A[:, 1:oy]), above, 17, comm_cart)
+        end
         # wait
-        if any(reqs .!= [MPI.REQUEST_NULL]) MPI.Waitall!(reqs); end
+        if any(reqs .!= [MPI.REQUEST_NULL])
+            MPI.Waitall!(reqs)
+        end
         # update
-        if (above != MPI.MPI_PROC_NULL) A[:,1:oy        ] .+= Data.Array(recv_buf_y_down); end
-        if (below != MPI.MPI_PROC_NULL) A[:,end-oy+1:end] .+= Data.Array(recv_buf_y_up  ); end
+        if (above != MPI.MPI_PROC_NULL)
+            A[:, 1:oy] .+= Data.Array(recv_buf_y_down)
+        end
+        if (below != MPI.MPI_PROC_NULL)
+            A[:, end-oy+1:end] .+= Data.Array(recv_buf_y_up)
+        end
     end
 
     return
@@ -667,32 +729,32 @@ Transforms coordinates of the current rank to the neighbour coordinates for a gi
 end
 
 """
-    posToNeighbourIdx!(localDomain, x, y)
+    posToNeighbourIdx!(localDomain, coords, dims, x, y, dx, dy)
 
 Retrieves a potential neighbour index given a local position
 """
-@views function posToNeighbourIdx!(localDomain, x, y)
-    if y < 0.0
-        (x < 0.0) && return 1
-        (x > localDomain[1]) && return 3
+@views function posToNeighbourIdx!(localDomain, coords, dims, x, y, dx, dy)
+    if y < dy && (coords[2] != 0)
+        (x < dx) && (coords[1] != 0) && return 1
+        (x > localDomain[1] - dx) && (coords[1] != dims[1] - 1) && return 3
         return 2
     end
-    if y > localDomain[2]
-        (x < 0.0) && return 7
-        (x > localDomain[1]) && return 5
+    if y > localDomain[2] - dy && (coords[2] != dims[2] - 1)
+        (x < dx) && (coords[1] != 0) && return 7
+        (x > localDomain[1] - dx) && (coords[1] != dims[1] - 1) && return 5
         return 6
     end
-    (x < 0.0) && return 8
-    (x > localDomain[1]) && return 4
+    (x < dx) && (coords[1] != 0) && return 8
+    (x > localDomain[1] - dx) && (coords[1] != dims[1] - 1) && return 4
     return 0 # inside local domain, no neighbour
 end
 
 """
-    exchangeMarkers!(comm, dims, localDomain, x_m, y_m, ρ_m, μ_m)
+    exchangeMarkers!(comm, dims, localDomain, dx, dy, x_m, y_m, ρ_m, μ_m)
 
 Exchanges markers outside of local boundaries to respective neighbouring ranks
 """
-@views function exchangeMarkers!(comm, dims, localDomain, x_m, y_m, ρ_m, μ_m)
+@views function exchangeMarkers!(comm, dims, localDomain, dx, dy, x_m, y_m, ρ_m, μ_m)
     numNeighbors = 8
     coords = MPI.Cart_coords(comm)
 
@@ -747,7 +809,8 @@ Exchanges markers outside of local boundaries to respective neighbouring ranks
     sz = size(x_m, 1)
     @assert size(y_m, 1) == sz && size(ρ_m, 1) == sz && size(μ_m, 1) == sz
     for i = 1:sz
-        dstId = posToNeighbourIdx!(localDomain, x_m[i], y_m[i])
+        # dx / 2, dy / 2 to shift *half* a cell earlier (except at physical boundaries)
+        dstId = posToNeighbourIdx!(localDomain, coords, dims, x_m[i], y_m[i], dx / 2, dy / 2)
         if dstId == 0
             # inside, push to tmp
             push!(tmpx, x_m[i])
@@ -757,8 +820,8 @@ Exchanges markers outside of local boundaries to respective neighbouring ranks
         else
             # outside, prepare to send
             shift = neihgbourIdxToShift!(dstId)
-            x_m[i] -= localDomain[1] * shift[1]
-            y_m[i] -= localDomain[2] * shift[2]
+            x_m[i] -= (localDomain[1] - dx) * shift[1]
+            y_m[i] -= (localDomain[2] - dy) * shift[2]
             push!(sendBuffersx[dstId], x_m[i])
             push!(sendBuffersy[dstId], y_m[i])
             push!(sendBuffersρ[dstId], ρ_m[i])
