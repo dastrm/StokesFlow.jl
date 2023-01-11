@@ -38,9 +38,12 @@ Creates an animation from the markers previously saved to disk
     @assert size(x_m, 1) == size(y_m, 1)
     @assert size(x_m, 1) == size(ρ_m, 1)
 
-    opts = (color=Int.(round.(exp.(ρ_m))), size=(1200, 1150), margin=1mm, legend=false, markersize=3, markerstrokewidth=0)
-    @assert !(any(isnan, x_m) || any(isnan, y_m) || any(isnan, ρ_m))
-    scatter(x_m, y_m; opts...)
+    # sort coordinates to avoid visualization artifacts
+    m = sortslices([x_m y_m ρ_m]', dims=2)
+    @assert !any(isnan, m)
+
+    opts = (color=Int.(round.(exp.(m[3, :]))), size=(1200, 1150), margin=1mm, legend=false, markersize=3, markerstrokewidth=0)
+    scatter(m[1, :], m[2, :]; opts...)
   end
 
   gif(anim, "viz_out/markers.gif"; fps=animfps)
@@ -138,15 +141,15 @@ Creates an animation from the grid values previously saved to disk
         ip += 1
       end
     end
+    @assert !(any(isnan, x) || any(isnan, y) || any(isnan, μ_b))
+    @assert !(any(isnan, x_p) || any(isnan, y_p) || any(isnan, P))
+    @assert !(any(isnan, x_vx) || any(isnan, y_vx) || any(isnan, Vx))
+    @assert !(any(isnan, x_vy) || any(isnan, y_vy) || any(isnan, Vy))
 
     opts = (size=(1200, 1000), margin=10mm, c=:inferno)
-    @assert !(any(isnan, x) || any(isnan, y) || any(isnan, μ_b))
     p1 = heatmap(x, y, μ_b'; title="μ_b", opts...)
-    @assert !(any(isnan, x_p) || any(isnan, y_p) || any(isnan, P))
     p2 = heatmap(x_p, y_p, P'; title="Pressure", opts...)
-    @assert !(any(isnan, x_vx) || any(isnan, y_vx) || any(isnan, Vx))
     p3 = heatmap(x_vx, y_vx, Vx'; title="Vx", opts...)
-    @assert !(any(isnan, x_vy) || any(isnan, y_vy) || any(isnan, Vy))
     p4 = heatmap(x_vy, y_vy, Vy'; title="Vy", opts...)
     plot(p1, p2, p3, p4)
   end
