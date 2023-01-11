@@ -1,5 +1,7 @@
-# ParallelStencil and ImplicitGlobalGrid must already be initalized !!!
-using Printf, Statistics, ParallelStencil, ImplicitGlobalGrid, MPI
+# ParallelStencil must already be initalized !!!
+# ImplicitGlobalGrid must be initialized before calling solveStokes!(..)
+using Printf, ParallelStencil, ImplicitGlobalGrid
+import MPI, Statistics
 
 # STOKES SOLVER
 # Vx_s & Vy_s denotes the 'small' (unpadded) arrays, Vx_pad, Vy_pad are padded.
@@ -84,9 +86,9 @@ end
 
 function compute_err(Rx,Ry,∇V,comm)
     comm_size = MPI.Comm_size(comm)
-    mean_Rx = MPI.Allreduce(mean(abs.(Rx)), MPI.SUM, comm)/comm_size
-    mean_Ry = MPI.Allreduce(mean(abs.(Ry)), MPI.SUM, comm)/comm_size
-    mean_∇V = MPI.Allreduce(mean(abs.(∇V)), MPI.SUM, comm)/comm_size
+    mean_Rx = MPI.Allreduce(Statistics.mean(abs.(Rx)), MPI.SUM, comm)/comm_size
+    mean_Ry = MPI.Allreduce(Statistics.mean(abs.(Ry)), MPI.SUM, comm)/comm_size
+    mean_∇V = MPI.Allreduce(Statistics.mean(abs.(∇V)), MPI.SUM, comm)/comm_size
     return max(mean_Rx, mean_Ry, mean_∇V)
 end
 
