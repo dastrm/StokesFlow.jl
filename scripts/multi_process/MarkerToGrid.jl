@@ -8,17 +8,7 @@ import MPI
     import CUDA
 end
 
-# Workaround for ParallelStencil Bug: @ps_println only works on GPU
-@static if USE_GPU
-    macro printline(args...)
-        esc(:(@ps_println($(args...))))
-    end
-else
-    macro printline(args...)
-        esc(:(println($(args...))))
-    end
-end
-
+include("common.jl")
 
 """
     bilinearMarkerToGrid!(x_grid_min, y_grid_min, val_grid, x_m, y_m, val_m, dx, dy, val_wt_sum, wt_sum, grid::::ImplicitGlobalGrid.GlobalGrid)
@@ -195,24 +185,20 @@ function sum_up_overlapping_values!(A::Data.Array, grid::ImplicitGlobalGrid.Glob
 
     @assert 2 * ox <= size(A, 1) && 2 * oy <= size(A, 2) "Total overlap is bigger than Array itself"
 
-    # receive buffers
-    recv_buf_x_lr = zeros(ox, size(A, 2))
-    recv_buf_x_rl = zeros(ox, size(A, 2))
-    recv_buf_y_down = zeros(size(A, 1), oy)
-    recv_buf_y_up = zeros(size(A, 1), oy)
-
     # neighbors
     below = nb[2, 2]
     above = nb[1, 2]
     right = nb[2, 1]
     left = nb[1, 1]
 
-    # prepare requests
-    reqs = fill(MPI.REQUEST_NULL, 4)
-
     # compute the sums: first in x, then in y. must be separate for correct results in corners.
     # exchange in x-direction
     if ox > 0
+        # receive buffers
+        recv_buf_x_lr = zeros(ox, size(A, 2))
+        recv_buf_x_rl = zeros(ox, size(A, 2))
+        # prepare requests
+        reqs = fill(MPI.REQUEST_NULL, 4)
         # receive
         if (left != MPI.MPI_PROC_NULL)
             reqs[1] = MPI.Irecv!(recv_buf_x_lr, left, 13, comm_cart)
@@ -242,8 +228,11 @@ function sum_up_overlapping_values!(A::Data.Array, grid::ImplicitGlobalGrid.Glob
 
     # exchange in y-direction
     if oy > 0
+        # receive buffers
+        recv_buf_y_down = zeros(size(A, 1), oy)
+        recv_buf_y_up = zeros(size(A, 1), oy)
         # prepare requests
-        fill!(reqs, MPI.REQUEST_NULL)
+        reqs = fill(MPI.REQUEST_NULL, 4)
         # receive
         if (above != MPI.MPI_PROC_NULL)
             reqs[1] = MPI.Irecv!(recv_buf_y_down, above, 7, comm_cart)
