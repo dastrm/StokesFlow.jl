@@ -115,10 +115,8 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     @assert size(x_ρ, 1) == size(ρ_vy, 1) && size(y_ρ, 1) == size(ρ_vy, 2)
 
     # --- INITIAL CONDITIONS ---
-    setInitialMarkerCoords!(x_m, y_m, Nmx, Nmy, x, y, RAND_MARKER_POS::Bool)
+    setInitialMarkerCoords!(coords, dims, dx, dy, x_m, y_m, Nmx, Nmy, x, y, RAND_MARKER_POS::Bool)
     setInitialMarkerProperties!(coords, lxl, lyl, x_m, y_m, ρ_m, μ_m, Nm, μ_air, μ_matrix, μ_plume, ρ_air, ρ_matrix, ρ_plume, plume_x, plume_y, plume_r, air_height)
-    # TODO: exchangeMarkers here not necessary anymore once setInitialMarkerCoords is correct
-    x_m, y_m, ρ_m, μ_m = exchangeMarkers!(comm_cart, dims, [lxl, lyl], dx, dy, Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m))
     if do_plot
         (rank == 0) && saveStats!(dims, Nt)
         saveMarkers!(0, rank, coords, [lxl, lyl], x_m, y_m, ρ_m)
@@ -203,7 +201,7 @@ end
 
 
 """
-    setInitialMarkerCoords!(x_m, y_m, Nmx, Nmy, xlims, ylims, RAND_MARKER_POS::Bool; rng=Random.GLOBAL_RNG)
+    setInitialMarkerCoords!(coords, dims, dx, dy, x_m, y_m, Nmx, Nmy, xlims, ylims, RAND_MARKER_POS::Bool; rng=Random.GLOBAL_RNG)
 
 Sets initial coordinates and properties of the markers
 
@@ -211,14 +209,18 @@ Sets initial coordinates and properties of the markers
 
 `xlims` and `ylims` contain domain lower and upper limits at start and end indices respectively
 """
-@views function setInitialMarkerCoords!(x_m, y_m, Nmx, Nmy, xlims, ylims, RAND_MARKER_POS::Bool; rng=Random.GLOBAL_RNG)
+@views function setInitialMarkerCoords!(coords, dims, dx, dy, x_m, y_m, Nmx, Nmy, xlims, ylims, RAND_MARKER_POS::Bool; rng=Random.GLOBAL_RNG)
     Nm = Nmx * Nmy
     @assert size(x_m, 1) == (Nm)
     @assert size(y_m, 1) == (Nm)
-    dxm = (xlims[end] - xlims[1]) / Nmx
-    dym = (ylims[end] - ylims[1]) / Nmy
-    xcoords = LinRange(xlims[1] + 0.5dxm, xlims[end] - 0.5dxm, Nmx)
-    ycoords = LinRange(ylims[1] + 0.5dym, ylims[end] - 0.5dym, Nmy)
+    xlimslower = coords[1] == 0 ? xlims[1] : xlims[1] + dx / 2
+    xlimsupper = coords[1] == dims[1] - 1 ? xlims[end] : xlims[end] - dx / 2
+    ylimslower = coords[2] == 0 ? ylims[1] : ylims[1] + dy / 2
+    ylimsupper = coords[2] == dims[2] - 1 ? ylims[end] : ylims[end] - dy / 2
+    dxm = (xlimsupper - xlimslower) / Nmx
+    dym = (ylimsupper - ylimslower) / Nmy
+    xcoords = LinRange(xlimslower + 0.5dxm, xlimsupper - 0.5dxm, Nmx)
+    ycoords = LinRange(ylimslower + 0.5dym, ylimsupper - 0.5dym, Nmy)
     m = 1
     for ix = 1:Nmx
         for iy = 1:Nmy
