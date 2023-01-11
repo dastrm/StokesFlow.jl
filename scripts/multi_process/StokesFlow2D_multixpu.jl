@@ -119,7 +119,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     setInitialMarkerProperties!(coords, lxl, lyl, x_m, y_m, ρ_m, μ_m, Nm, μ_air, μ_matrix, μ_plume, ρ_air, ρ_matrix, ρ_plume, plume_x, plume_y, plume_r, air_height)
     if do_plot
         (rank == 0) && saveStats!(dims, Nt)
-        saveMarkers!(0, rank, coords, [lxl, lyl], x_m, y_m, ρ_m)
+        saveMarkers!(0, rank, coords, [lxl, lyl], dx, dy, x_m, y_m, ρ_m)
         saveGrid!(0, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
     end
     # transform marker arrays to xPU arrays
@@ -172,7 +172,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
         # plot current state
         if do_plot
-            saveMarkers!(t, rank, coords, [lxl, lyl], x_m, y_m, ρ_m)
+            saveMarkers!(t, rank, coords, [lxl, lyl], dx, dy, x_m, y_m, ρ_m)
             saveGrid!(t, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
         end
 
@@ -282,15 +282,15 @@ Saves visualization relevant stats to disk in .mat format
 end
 
 """
-    saveMarkers!(it, rank, coords, localDomain, x_m, y_m, ρ_m)
+    saveMarkers!(it, rank, coords, localDomain, dx, dy, x_m, y_m, ρ_m)
 
 Saves marker positions and densities to disk in .mat format
 """
-@views function saveMarkers!(it, rank, coords, localDomain, x_m, y_m, ρ_m)
+@views function saveMarkers!(it, rank, coords, localDomain, dx, dy, x_m, y_m, ρ_m)
     file = matopen(string(@sprintf("viz_out/markers_%04d_%04d", it, rank), ".mat"), "w")
 
-    write(file, "x_m", convert.(Float32, Array(x_m) .+ (localDomain[1] * coords[1])))
-    write(file, "y_m", convert.(Float32, Array(y_m) .+ (localDomain[2] * coords[2])))
+    write(file, "x_m", convert.(Float32, Array(x_m) .+ ((localDomain[1] - dx) * coords[1])))
+    write(file, "y_m", convert.(Float32, Array(y_m) .+ ((localDomain[2] - dy) * coords[2])))
     write(file, "rho_m", convert.(Float32, Array(ρ_m)))
 
     close(file)
