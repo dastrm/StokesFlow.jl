@@ -172,7 +172,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
         # plot current state
         if do_plot
-            saveStats!(0, rank, dims)
+            saveStats!(t, rank, dims)
             saveMarkers!(t, rank, coords, [lxl, lyl], dx, dy, x_m, y_m, ρ_m)
             saveGrid!(t, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
         end
