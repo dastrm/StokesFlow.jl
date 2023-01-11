@@ -57,6 +57,7 @@ end
 Creates an animation from the grid values previously saved to disk
 """
 @views function vizGrid(dims, nt)
+  (nt == 0) && return nothing
   anim = @animate for it = 1:nt
     x = []
     y = []
