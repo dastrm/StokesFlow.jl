@@ -7,7 +7,7 @@ Result is only valid on rank 0.
 function gather_markers!(x_m,y_m,ρ_m,μ_m,x_m_glob,y_m_glob,ρ_m_glob,μ_m_glob,dims,dx,dy,lx_loc,ly_loc,me,comm_cart)
     Nm_loc = length(x_m)
     @assert Nm_loc == length(y_m)
-    @show num_markers = MPI.Allgather(Int32(Nm_loc),comm_cart)
+    num_markers = MPI.Allgather(Int32(Nm_loc),comm_cart)
 
     if me == 0
         Nm_glob = sum(num_markers)
@@ -17,18 +17,23 @@ function gather_markers!(x_m,y_m,ρ_m,μ_m,x_m_glob,y_m_glob,ρ_m_glob,μ_m_glob
         resize!(μ_m_glob,Nm_glob)
     end
 
-    MPI.Gatherv!(x_m,x_m_glob,num_markers,0,comm_cart)
-    MPI.Gatherv!(y_m,y_m_glob,num_markers,0,comm_cart)
-    MPI.Gatherv!(ρ_m,ρ_m_glob,num_markers,0,comm_cart)
-    MPI.Gatherv!(μ_m,μ_m_glob,num_markers,0,comm_cart)
+    if me==0
+        MPI.Gatherv!(x_m,MPI.VBuffer(x_m_glob,num_markers),0,comm_cart)
+        MPI.Gatherv!(y_m,MPI.VBuffer(y_m_glob,num_markers),0,comm_cart)
+        MPI.Gatherv!(ρ_m,MPI.VBuffer(ρ_m_glob,num_markers),0,comm_cart)
+        MPI.Gatherv!(μ_m,MPI.VBuffer(μ_m_glob,num_markers),0,comm_cart)
+    else
+        MPI.Gatherv!(x_m,nothing,0,comm_cart)
+        MPI.Gatherv!(y_m,nothing,0,comm_cart)
+        MPI.Gatherv!(ρ_m,nothing,0,comm_cart)
+        MPI.Gatherv!(μ_m,nothing,0,comm_cart)
+    end
     
     # shift marker coords
     if me == 0
-        @show dims
         for xproc in 0:dims[1]-1
             for yproc in 0:dims[2]-1
-                @show xproc, yproc
-                @show rank = MPI.Cart_rank(comm_cart,[xproc,yproc,0])
+                rank = MPI.Cart_rank(comm_cart,[xproc,yproc,0])
                 glob_m_first = sum(num_markers[1:rank]) + 1
                 glob_m_last = glob_m_first + num_markers[rank+1] - 1
                 x_shift = xproc*(lx_loc-dx)
