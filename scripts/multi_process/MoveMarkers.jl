@@ -74,7 +74,7 @@ function interpolateV(x, y, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dx, 
     #index range failsafe (that should never be used)
     if ix < 2
         @printline("WARNING: Vx-interpolation, ix=$(ix) too small")
-        ix = 1
+        ix = 2
         dxij = 0.0
     end
     if iy < 1
@@ -127,7 +127,7 @@ function interpolateV(x, y, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dx, 
     end
     if iy < 2
         @printline("WARNING: Vy-interpolation, iy=$(iy) too small")
-        iy = 1
+        iy = 2
         dyij = 0.0
     end
     if ix >= size(Vy, 1)
