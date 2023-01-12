@@ -76,7 +76,7 @@ end
 
 # this function is very slow and could be improved significantly, but is not called often
 @views function compute_dt(Vx,Vy,maxdisp,dx,dy)
-    return maxdisp*min(dx/maximum(Vx[2:end-1,:]),dy/maximum(Vy[:,2:end-1]))
+    return maxdisp*min(dx/maximum(abs.(Vx[2:end-1,:])),dy/maximum(abs.(Vy[:,2:end-1])))
 end
 
 @parallel function compute_timesteps!(dτVx, dτVy, dτP, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)

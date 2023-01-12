@@ -94,7 +94,7 @@ end
 
 # this function is very slow and could be improved significantly, but is not often called
 function compute_dt(Vx,Vy,maxdisp,dx,dy,comm)
-    min_l = min(dx/maximum(Vx),dy/maximum(Vy))
+    min_l = min(dx/maximum(abs.(Vx)),dy/maximum(abs.(Vy)))
     return maxdisp*MPI.Allreduce(min_l, MPI.MIN, comm)
 end
 

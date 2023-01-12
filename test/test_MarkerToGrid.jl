@@ -11,7 +11,7 @@ end
 include("../scripts/multi_process/MarkerToGrid.jl")
 include("../scripts/GlobalGather.jl")
 
-using Test
+using Test, ImplicitGlobalGrid
 import MPI
 
 Nx = 5

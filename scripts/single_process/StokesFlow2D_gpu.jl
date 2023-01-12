@@ -141,7 +141,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
         end
 
         # move markers
-        #@assert dt ≈ maxdisp*min(dx/maximum(Vx[2:end-1,:]),dy/maximum(Vy[:,2:end-1]))
+        #@assert dt ≈ maxdisp*min(dx/maximum(abs.(Vx[2:end-1,:])),dy/maximum(abs.(Vy[:,2:end-1])))
         t3 = @elapsed begin
             @parallel (1:Nm) moveMarkersRK4!(xy_m,Vx,Vy,x_vx[1],y_vx[1],x_vy[1],y_vy[1],dt,lx,ly,dx,dy)
         end
@@ -454,6 +454,6 @@ end
     # tests should not depend on a rng seed, see the Warning at https://docs.julialang.org/en/v1/stdlib/Random/
     result = StokesFlow2D(;Nt=nt,Nx=nx,Ny=ny,RAND_MARKER_POS=false,do_plot=false,print_info=false)
     inds   = [58, 181, 219, 388, 444, 573, 637, 743, 898, 920, 924, 1049, 1074, 1223, 1367, 1443, 1509, 1689]
-    refs   = [-0.10913189522798934, -0.06772851920316314, -0.019783423619517453, -0.09314744141695713, -0.07441529203384176, -0.08153682961357278, -0.20645341376883533, -0.011494023058106853, 0.15702253120612208, -0.06986105558317958, 0.0, 0.22084086270131068, -0.030090549345785172, 0.0, -0.027803646429553273, 0.026059300899530468, -0.1331018326182854, -0.10562371036144826]
-    @test all(isapprox.(refs, result[inds]; atol=1e-4))
+    refs   = [-0.12214114586255667, -0.0667076387114675, -0.018877199741876093, -0.10981380493111671, -0.07598478543941906, -0.10558697133035841, -0.2650720306413578, -0.02165141322582277, 0.12431567488238013, -0.04566018334288691, 0.0, 0.28016805437066455, -0.032071252296091125, 0.0, -0.035370687291281025, 0.03399476441848683, -0.1803366413484094, -0.1474306178559506]
+    @test all(isapprox.(refs, result[inds]))
 end
