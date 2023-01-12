@@ -36,7 +36,10 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     grid = ImplicitGlobalGrid.get_global_grid()
 
     ENV["GKSwstype"] = "nul"
-    (rank == 0) && (!isdir("viz_out")) && mkdir("viz_out")
+    if do_plot
+        (rank == 0) && (!isdir("viz_out")) && mkdir("viz_out")
+        MPI.Barrier(comm_cart) # ensures that dir viz_out exists from now on
+    end
 
     # --- PARAMETERS ---
     # time
