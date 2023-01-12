@@ -1,6 +1,6 @@
 using ParallelStencil
 using ParallelStencil.FiniteDifferences2D
-const USE_GPU = false#ENV["USE_GPU"] == "true" ? true : false
+const USE_GPU = ENV["USE_GPU"] == "true" ? true : false
 
 @static if USE_GPU
     @init_parallel_stencil(CUDA, Float64, 2)
@@ -81,7 +81,7 @@ bilinearMarkerToGrid!(x_grid3_min, y_grid3_min, val_grid3, x_m, y_m, val_m, dx, 
 x_m_glob = zeros(0)
 y_m_glob = zeros(0)
 val_m_glob = zeros(0)
-gather_markers!(x_m,y_m,val_m,val_m,x_m_glob,y_m_glob,val_m_glob,val_m_glob,dims,dx,dy,lx,ly,rank,comm_cart)
+gather_markers!(Array(x_m),Array(y_m),Array(val_m),Array(val_m),x_m_glob,y_m_glob,val_m_glob,val_m_glob,dims,dx,dy,lx,ly,rank,comm_cart)
 
 # gather global grid values
 grid1_glob = if rank == 0 zeros(Tuple(dims[1:2]).*size(val_grid1)) else zeros(0,0) end
@@ -114,14 +114,17 @@ if rank == 0
     val_wt_sum = @ones(Nx+1,Ny  )
     wt_sum     = @ones(Nx+1,Ny  )
     # interpolate to grid
+    x_m_glob = Data.Array(x_m_glob)
+    y_m_glob = Data.Array(y_m_glob)
+    val_m_glob = Data.Array(val_m_glob)
     bilinearMarkerToGrid!(x_grid1_min, y_grid1_min, val_grid1_sp, x_m_glob, y_m_glob, val_m_glob, dx, dy, val_wt_sum, wt_sum, grid)
     bilinearMarkerToGrid!(x_grid2_min, y_grid2_min, val_grid2_sp, x_m_glob, y_m_glob, val_m_glob, dx, dy, val_wt_sum, wt_sum, grid)
     bilinearMarkerToGrid!(x_grid3_min, y_grid3_min, val_grid3_sp, x_m_glob, y_m_glob, val_m_glob, dx, dy, val_wt_sum, wt_sum, grid)
 
     # test approximate equality
-    @test all(val_grid1_sp .≈ grid1_glob)
-    @test all(val_grid2_sp .≈ grid2_glob)
-    @test all(val_grid3_sp .≈ grid3_glob)
+    @test all(Array(val_grid1_sp) .≈ grid1_glob)
+    @test all(Array(val_grid2_sp) .≈ grid2_glob)
+    @test all(Array(val_grid3_sp) .≈ grid3_glob)
 
 end
 
