@@ -15,28 +15,19 @@ USE_GPU = false
         cmd(n=nprocs) = `$mpirun -n $n $(Base.julia_cmd()) $(joinpath(testdir, f))`
 
         withenv("USE_GPU" => USE_GPU) do
-            r = run(ignorestatus(cmd()))
-            @test success(r)
-        end
-        
-        
-        #=
-        if f == "test_spawn.jl"
-            # Some command as the others, but always use a single process
-            r = run(ignorestatus(cmd(1)))
-            @test success(r)
-        elseif f == "test_threads.jl"
-            withenv("JULIA_NUM_THREADS" => "4") do
+
+            if f == "test_StokesSolver.jl"
+                # run this test with up to 4 processes
+                # TODO: this test passes, except when BOTH --check-bounds=true and USE_GPU==true (however no bounds-check fails...)
+                for npr=1:min(nprocs,4)
+                    r = run(ignorestatus(cmd(npr)))
+                    @test success(r)
+                end
+            else
                 r = run(ignorestatus(cmd()))
+                @test success(r)
             end
-            @test success(r)
-        elseif f == "test_error.jl"
-            r = run(ignorestatus(cmd()))
-            @test !success(r)
-        else
-            r = run(ignorestatus(cmd()))
-            @test success(r)
         end
-        =#
+
     end
 end
