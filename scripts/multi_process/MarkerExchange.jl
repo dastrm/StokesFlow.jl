@@ -8,6 +8,14 @@ Exchanges markers outside of local boundaries to respective neighbouring ranks
 @views function exchangeMarkers!(comm, dims, localDomain, dx, dy, x_m, y_m, ρ_m, μ_m)
     numNeighbors = 8
     coords = MPI.Cart_coords(comm)
+    # local order of neighbour indices for rank x is given as follows:
+    # 7       6       5
+    #     ---------    
+    #     |       |    
+    # 8   |   x   |   4
+    #     |       |    
+    #     ---------    
+    # 1       2       3
 
     # calculate send / receive ranks
     dstRanks = zeros(Int32, numNeighbors)

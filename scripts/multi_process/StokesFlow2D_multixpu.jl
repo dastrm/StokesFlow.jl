@@ -203,43 +203,6 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     return Array(Vx)
 end
 
-
-"""
-    setInitialMarkerCoords!(coords, dims, dx, dy, x_m, y_m, Nmx, Nmy, xlims, ylims, RAND_MARKER_POS::Bool; rng=Random.GLOBAL_RNG)
-
-Sets initial coordinates and properties of the markers
-
-`x` and `y` are coordinates of the basic grid nodes
-
-`xlims` and `ylims` contain domain lower and upper limits at start and end indices respectively
-"""
-@views function setInitialMarkerCoords!(coords, dims, dx, dy, x_m, y_m, Nmx, Nmy, xlims, ylims, RAND_MARKER_POS::Bool; rng=Random.GLOBAL_RNG)
-    Nm = Nmx * Nmy
-    @assert size(x_m, 1) == (Nm)
-    @assert size(y_m, 1) == (Nm)
-    xlimslower = coords[1] == 0 ? xlims[1] : xlims[1] + dx / 2
-    xlimsupper = coords[1] == dims[1] - 1 ? xlims[end] : xlims[end] - dx / 2
-    ylimslower = coords[2] == 0 ? ylims[1] : ylims[1] + dy / 2
-    ylimsupper = coords[2] == dims[2] - 1 ? ylims[end] : ylims[end] - dy / 2
-    dxm = (xlimsupper - xlimslower) / Nmx
-    dym = (ylimsupper - ylimslower) / Nmy
-    xcoords = LinRange(xlimslower + 0.5dxm, xlimsupper - 0.5dxm, Nmx)
-    ycoords = LinRange(ylimslower + 0.5dym, ylimsupper - 0.5dym, Nmy)
-    m = 1
-    for ix = 1:Nmx
-        for iy = 1:Nmy
-            x_m[m] = xcoords[ix]
-            y_m[m] = ycoords[iy]
-            m += 1
-        end
-    end
-    if RAND_MARKER_POS
-        x_m .+= (rand(rng, Nm) .- 0.5) .* dxm
-        y_m .+= (rand(rng, Nm) .- 0.5) .* dym
-    end
-    return nothing
-end
-
 """
     setInitialMarkerProperties!(coords, lx, ly, x_m, y_m, ρ_m, μ_m, Nm, μ_air, μ_matrix, μ_plume, ρ_air, ρ_matrix, ρ_plume, plume_x, plume_y, plume_r, air_height)
 

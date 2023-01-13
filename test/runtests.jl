@@ -19,10 +19,18 @@ USE_GPU = false
             if f == "test_StokesSolver.jl"
                 # run this test with up to 4 processes
                 # TODO: this test passes, except when BOTH --check-bounds=true and USE_GPU==true (however no bounds-check fails...)
-                for npr=1:min(nprocs,4)
+                for npr = 1:min(nprocs, 4)
                     r = run(ignorestatus(cmd(npr)))
                     @test success(r)
                 end
+            elseif f == "test_MarkerExchange_1P.jl"
+                # run this test with exactly 1 process
+                r = run(ignorestatus(cmd(1)))
+                @test success(r)
+            elseif f == "test_MarkerExchange_9P.jl"
+                # run this test with exactly 9 processes
+                r = run(ignorestatus(cmd(9)))
+                @test success(r)
             else
                 r = run(ignorestatus(cmd()))
                 @test success(r)
