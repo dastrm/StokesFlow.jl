@@ -16,9 +16,9 @@ import MPI, Statistics
     Vsc       = 0.45        # relaxation paramter for the momentum equations pseudo-timesteps limiters
     Ptsc      = 1.0/2.0 
     min_dxy2  = min(dx,dy)^2
-    max_nxy   = max(Nx,Ny)
-    dampX     = 1.0-Vdmp/Nx # damping term for the x-momentum equation
-    dampY     = 1.0-Vdmp/Ny # damping term for the y-momentum equation
+    max_nxy   = max(nx_g(),ny_g())
+    dampX     = 1.0-Vdmp/nx_g() # damping term for the x-momentum equation
+    dampY     = 1.0-Vdmp/ny_g() # damping term for the y-momentum equation
 
     # numerical helper values
     _dx = 1.0/dx
@@ -30,8 +30,8 @@ import MPI, Statistics
 
     # PT setup and iterations
     @parallel compute_timesteps!(dτVx, dτVy, dτPt, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
-    ncheck    = min(5*min(Nx,Ny),2000)
-    ndtupdate = 10*min(Nx,Ny)
+    ncheck    = min(5*min(nx_g(),ny_g()),2000)
+    ndtupdate = 10*min(nx_g(),ny_g())
     t1 = 0; itert1 = 11
     #err_evo1=[]; err_evo2=[]
     err = 2ϵ; iter=1; niter=0; iterMax=100000
