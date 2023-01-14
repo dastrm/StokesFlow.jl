@@ -28,8 +28,8 @@ Interpolates markers to grid points
     sum_up_local_contributions!(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy, Nm)
 
     # perform reduction on boundaries
-    sum_up_overlapping_values!(wt_sum, grid)
-    sum_up_overlapping_values!(val_wt_sum, grid)
+    sumOverlappingValues!(wt_sum, grid)
+    sumOverlappingValues!(val_wt_sum, grid)
 
     # finally compute actual value from the sums
     @parallel (1:Nx, 1:Ny) safeDivision(val_grid, val_wt_sum, wt_sum)
@@ -40,18 +40,18 @@ end
 @static if USE_GPU
     @inline function sum_up_local_contributions!(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy, Nm)
         @parallel (1:Nm) atomicAddInterpolationCUDA!(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy)
-        return
+        return nothing
     end
 else
     @inline function sum_up_local_contributions!(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy, Nm)
         singleCoreInterpolationCPU!(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy, Nm)
-        return
+        return nothing
     end
 end
 
 @static if USE_GPU
     """
-        atomicAddInterpolation(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy)
+        atomicAddInterpolationCUDA!(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy)
 
     Sums up all interpolation weights in an atomic fashion
     """
@@ -102,6 +102,11 @@ end
 
 
 @static if !USE_GPU
+    """
+        singleCoreInterpolationCPU!(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy, Nm)
+
+    Sums up all interpolation weights using arrays
+    """
     @inline function singleCoreInterpolationCPU!(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy, Nm)
         for m = 1:1:Nm
 
@@ -167,7 +172,7 @@ Performs division and warns about zero denominator
 end
 
 """
-    sum_up_overlapping_values!(A::Data.Array, grid::ImplicitGlobalGrid.GlobalGrid)
+    sumOverlappingValues!(A::Data.Array, grid::ImplicitGlobalGrid.GlobalGrid)
 
 Sums up all values of the local array A that are overlapping in the global grid.
 Results are stored back in the corresponding entries of A.
@@ -175,7 +180,7 @@ Results are stored back in the corresponding entries of A.
 Implementation is not particularly efficient (especially memory-wise),
 but enough since it is not called very often.
 """
-function sum_up_overlapping_values!(A::Data.Array, grid::ImplicitGlobalGrid.GlobalGrid)
+@views function sumOverlappingValues!(A::Data.Array, grid::ImplicitGlobalGrid.GlobalGrid)
 
     nb = grid.neighbors
     comm_cart = grid.comm
@@ -260,5 +265,5 @@ function sum_up_overlapping_values!(A::Data.Array, grid::ImplicitGlobalGrid.Glob
         end
     end
 
-    return
+    return nothing
 end

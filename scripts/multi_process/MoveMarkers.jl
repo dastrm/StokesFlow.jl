@@ -7,20 +7,25 @@ import StaticArrays
 
 include("common.jl")
 
-function moveMarkersRK4!(x_m, y_m, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dt, lx, ly, dx, dy)
+"""
+    moveMarkersRK4!(x_m, y_m, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dt, lx, ly, dx, dy)
+
+Moves markers according to a fourth order Runge-Kutta method
+"""
+@views function moveMarkersRK4!(x_m, y_m, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dt, lx, ly, dx, dy)
 
     Nm = length(x_m)
     @assert (Nm == length(y_m)) "x and y Marker coords have not same length"
 
     @parallel (1:Nm) moveMarkersRK4_Kernel!(x_m, y_m, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dt, lx, ly, dx, dy)
 
-    return
+    return nothing
 end
 
 """
-moveMarkersRK4!(x_m, y_m, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dt, lx, ly, dx, dy)
+    moveMarkersRK4_Kernel!(x_m, y_m, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dt, lx, ly, dx, dy)
 
-Moves markers according to a fourth order Runge-Kutta method
+Implements a parallel fourth order Runge-Kutta method
 """
 @parallel_indices (m) function moveMarkersRK4_Kernel!(x_m, y_m, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dt, lx, ly, dx, dy)
 

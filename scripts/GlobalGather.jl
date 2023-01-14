@@ -1,10 +1,13 @@
 using ImplicitGlobalGrid, MPI
 
 """
+    gather_markers!(x_m, y_m, ρ_m, μ_m, x_m_glob, y_m_glob, ρ_m_glob, μ_m_glob, dims, dx, dy, lx_loc, ly_loc, me, comm_cart)
+
 This function gathers all markers (having local coordinates) into arrays with global coordinates.
+
 Result is only valid on rank 0.
 """
-function gather_markers!(x_m, y_m, ρ_m, μ_m, x_m_glob, y_m_glob, ρ_m_glob, μ_m_glob, dims, dx, dy, lx_loc, ly_loc, me, comm_cart)
+@views function gather_markers!(x_m, y_m, ρ_m, μ_m, x_m_glob, y_m_glob, ρ_m_glob, μ_m_glob, dims, dx, dy, lx_loc, ly_loc, me, comm_cart)
     Nm_loc = length(x_m)
     @assert Nm_loc == length(y_m)
     num_markers = MPI.Allgather(Int32(Nm_loc), comm_cart)
@@ -44,14 +47,17 @@ function gather_markers!(x_m, y_m, ρ_m, μ_m, x_m_glob, y_m_glob, ρ_m_glob, μ
         end
     end
 
-    return
+    return nothing
 end
 
 """
+    gather_V_grid(Vx_loc, Vy_loc, me, dims, nx, ny)
+
 This function gathers local grid arrays of Vx and Vy into arrays that look as if only a single process was used.
+
 Result is only valid on rank 0.
 """
-function gather_V_grid(Vx_loc, Vy_loc, me, dims, nx, ny)
+@views function gather_V_grid(Vx_loc, Vy_loc, me, dims, nx, ny)
     Vx_glob = if me == 0
         zeros(Tuple(dims[1:2]) .* size(Vx_loc))
     else
@@ -73,9 +79,10 @@ end
 
 
 """
+    create_grid_view(A_all, dims, Nx_loc, Ny_loc, Nx_A, Ny_A)
+
 This function creates global grid arrays that look as if only a single process was used from
-a global grid array containing ALL entries from all ranks, i.e. the result from a call to gather!(..) from ImplicitGlobalGrid.
-E.g. see gather_V_grid(..) for usage.
+a global grid array containing ALL entries from all ranks, i.e. the result from a call to `gather!(..)` from ImplicitGlobalGrid.
 """
 function create_grid_view(A_all, dims, Nx_loc, Ny_loc, Nx_A, Ny_A)
     @assert dims[3] == 1

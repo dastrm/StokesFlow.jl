@@ -53,7 +53,7 @@ sz = size(x_m, 1)
 @assert sz == size(μ_m, 1)
 
 # exchange markers
-x_m, y_m, ρ_m, μ_m = exchangeMarkers!(comm_cart, dims, localDomain, dx, dy, Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m))
+x_m, y_m, ρ_m, μ_m = exchangeMarkers(comm_cart, dims, localDomain, dx, dy, Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m))
 
 # check whether no markers have been lost (number of sent markers equals the number of received markers here)
 @test sz == size(x_m, 1)

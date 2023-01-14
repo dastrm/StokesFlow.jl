@@ -1,11 +1,11 @@
 import MPI
 
 """
-    exchangeMarkers!(comm, dims, localDomain, dx, dy, x_m, y_m, ρ_m, μ_m)
+    exchangeMarkers(comm, dims, localDomain, dx, dy, x_m, y_m, ρ_m, μ_m)
 
 Exchanges markers outside of local boundaries to respective neighbouring ranks
 """
-@views function exchangeMarkers!(comm, dims, localDomain, dx, dy, x_m, y_m, ρ_m, μ_m)
+@views function exchangeMarkers(comm, dims, localDomain, dx, dy, x_m, y_m, ρ_m, μ_m)
     numNeighbors = 8
     coords = MPI.Cart_coords(comm)
     # local order of neighbour indices for rank x is given as follows:
@@ -21,7 +21,7 @@ Exchanges markers outside of local boundaries to respective neighbouring ranks
     dstRanks = zeros(Int32, numNeighbors)
     srcRanks = zeros(Int32, numNeighbors)
     for i = 1:numNeighbors
-        ncoords = coordsToNeighbourCoords!(coords, i)
+        ncoords = coordsToNeighbourCoords(coords, i)
         nrank = MPI.MPI_PROC_NULL
         if (ncoords[1] >= 0) && (ncoords[1] <= dims[1] - 1) && (ncoords[2] >= 0) && (ncoords[2] <= dims[2] - 1)
             nrank = MPI.Cart_rank(comm, ncoords)
@@ -29,7 +29,7 @@ Exchanges markers outside of local boundaries to respective neighbouring ranks
         dstRanks[i] = nrank
     end
     for i = 1:numNeighbors
-        srcRanks[i] = dstRanks[dstToSrcIdx!(i)]
+        srcRanks[i] = dstRanks[dstToSrcIdx(i)]
     end
 
     # initialize send / receive buffers
@@ -69,7 +69,7 @@ Exchanges markers outside of local boundaries to respective neighbouring ranks
     @assert size(y_m, 1) == sz && size(ρ_m, 1) == sz && size(μ_m, 1) == sz
     for i = 1:sz
         # dx / 2, dy / 2 to shift *half* a cell earlier (except at physical boundaries)
-        dstId = posToNeighbourIdx!(localDomain, coords, dims, x_m[i], y_m[i], dx / 2, dy / 2)
+        dstId = posToNeighbourIdx(localDomain, coords, dims, x_m[i], y_m[i], dx / 2, dy / 2)
         if dstId == 0
             # inside, push to tmp
             push!(tmpx, x_m[i])
@@ -78,7 +78,7 @@ Exchanges markers outside of local boundaries to respective neighbouring ranks
             push!(tmpμ, μ_m[i])
         else
             # outside, prepare to send
-            shift = neighbourIdxToShift!(dstId)
+            shift = neighbourIdxToShift(dstId)
             x_m[i] -= (localDomain[1] - dx) * shift[1]
             y_m[i] -= (localDomain[2] - dy) * shift[2]
             push!(sendBuffersx[dstId], x_m[i])
@@ -163,21 +163,21 @@ Exchanges markers outside of local boundaries to respective neighbouring ranks
 end
 
 """
-    coordsToNeighbourCoords!(coords, i)
+    coordsToNeighbourCoords(coords, i)
 
 Transforms coordinates of the current rank to the neighbour coordinates for a given neighbour index
 """
-@views function coordsToNeighbourCoords!(coords, i)
+@views function coordsToNeighbourCoords(coords, i)
     @assert i >= 1 && i <= 8
-    return coords .+ neighbourIdxToShift!(i)
+    return coords .+ neighbourIdxToShift(i)
 end
 
 """
-    neighbourIdxToShift!(i)
+    neighbourIdxToShift(i)
 
 Calculates three-dimensional shift for a given neighbour index
 """
-@views function neighbourIdxToShift!(i)
+@views function neighbourIdxToShift(i)
     @assert i >= 1 && i <= 8
     (i == 1) && return [-1, -1, 0]
     (i == 2) && return [0, -1, 0]
@@ -190,22 +190,22 @@ Calculates three-dimensional shift for a given neighbour index
 end
 
 """
-    dstToSrcIdx!(i)
+    dstToSrcIdx(i)
 
 Transforms destination to source rank index
 """
-@views function dstToSrcIdx!(i)
+@views function dstToSrcIdx(i)
     @assert i >= 1 && i <= 8
     (i >= 5) && return (i + 4) % 9 + 1
     return i + 4
 end
 
 """
-    posToNeighbourIdx!(localDomain, coords, dims, x, y, dx, dy)
+    posToNeighbourIdx(localDomain, coords, dims, x, y, dx, dy)
 
 Retrieves a potential neighbour index given a local position
 """
-@views function posToNeighbourIdx!(localDomain, coords, dims, x, y, dx, dy)
+@views function posToNeighbourIdx(localDomain, coords, dims, x, y, dx, dy)
     if y < dy && (coords[2] != 0)
         (x < dx) && (coords[1] != 0) && return 1
         (x > localDomain[1] - dx) && (coords[1] != dims[1] - 1) && return 3

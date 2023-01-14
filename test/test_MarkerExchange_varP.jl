@@ -140,7 +140,7 @@ for i = eachindex(dimx)
     =#
 
     # exchange markers
-    x_m, y_m, ρ_m, μ_m = exchangeMarkers!(comm_cart, dims, [lx_loc, ly_loc], dx, dy, x_m, y_m, ρ_m, μ_m)
+    x_m, y_m, ρ_m, μ_m = exchangeMarkers(comm_cart, dims, [lx_loc, ly_loc], dx, dy, x_m, y_m, ρ_m, μ_m)
 
     # gather markers after exchange
     gather_markers!(x_m, y_m, ρ_m, μ_m, x_m_glob2, y_m_glob2, ρ_m_glob2, μ_m_glob2, dims, dx, dy, lx_loc, ly_loc, rank, comm_cart)

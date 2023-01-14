@@ -3,14 +3,16 @@
 using Printf, ParallelStencil, ImplicitGlobalGrid
 import MPI, Statistics
 
-# STOKES SOLVER
-# Vx_s & Vy_s denotes the 'small' (unpadded) arrays, Vx_pad, Vy_pad are padded.
-@views function solveStokes!(P, Vx_pad, Vy_pad, ρ_vy, μ_b, μ_p,
-    τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_s, Vy_s,
-    g_y, dx, dy, Nx, Ny,
-    dt, maxdisp, comm; use_free_surface_stabilization::Bool=true,
-    ϵ=1e-8,
-    print_info::Bool=true)
+"""
+    solveStokes!(P, Vx_pad, Vy_pad, ρ_vy, μ_b, μ_p, τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_s, Vy_s,
+        g_y, dx, dy, Nx, Ny, dt, maxdisp, comm; use_free_surface_stabilization::Bool=true, ϵ=1e-8, print_info::Bool=true)
+
+Implements a parallel pseudo-transcient Stokes solver
+
+`Vx_s` & `Vy_s` denote the 'small' (unpadded) arrays, Vx_pad, Vy_pad are padded.
+"""
+@views function solveStokes!(P, Vx_pad, Vy_pad, ρ_vy, μ_b, μ_p, τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_s, Vy_s,
+    g_y, dx, dy, Nx, Ny, dt, maxdisp, comm; use_free_surface_stabilization::Bool=true, ϵ=1e-8, print_info::Bool=true)
 
     Vdmp = 4.0
     Vsc = 0.45                  # relaxation paramter for the momentum equations pseudo-timesteps limiters
@@ -95,7 +97,12 @@ import MPI, Statistics
     return compute_dt(Vx_s, Vy_s, maxdisp, dx, dy, comm), T_eff
 end
 
-function compute_err(Rx, Ry, ∇V, comm)
+"""
+    compute_err(Rx, Ry, ∇V, comm)
+
+Computes the maximum error across all ranks
+"""
+@views function compute_err(Rx, Ry, ∇V, comm)
     comm_size = MPI.Comm_size(comm)
     mean_Rx = MPI.Allreduce(Statistics.mean(abs.(Rx)), MPI.SUM, comm) / comm_size
     mean_Ry = MPI.Allreduce(Statistics.mean(abs.(Ry)), MPI.SUM, comm) / comm_size
@@ -103,12 +110,23 @@ function compute_err(Rx, Ry, ∇V, comm)
     return max(mean_Rx, mean_Ry, mean_∇V)
 end
 
-# this function is very slow and could be improved significantly, but is not often called
-function compute_dt(Vx, Vy, maxdisp, dx, dy, comm)
+"""
+    compute_dt(Vx, Vy, maxdisp, dx, dy, comm)
+
+Computes a valid timestep from all ranks
+
+This function is very slow and could be improved significantly, but is not often called
+"""
+@views function compute_dt(Vx, Vy, maxdisp, dx, dy, comm)
     min_l = min(dx / maximum(abs.(Vx)), dy / maximum(abs.(Vy)))
     return maxdisp * MPI.Allreduce(min_l, MPI.MIN, comm)
 end
 
+"""
+    compute_timesteps!(dτVx, dτVy, dτP, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
+
+Computes timesteps for the pseudo-transcient solver
+"""
 @parallel function compute_timesteps!(dτVx, dτVy, dτP, μ_p, Vsc, Ptsc, min_dxy2, max_nxy)
     @all(dτVx) = Vsc * min_dxy2 / @av_xa(μ_p) / 4.1
     @all(dτVy) = Vsc * min_dxy2 / @av_ya(μ_p) / 4.1
@@ -116,6 +134,11 @@ end
     return
 end
 
+"""
+    compute_P_τ!(∇V, P, Vx, Vy, dτP, τxx, τyy, τxy, μ_p, μ_b, _dx, _dy)
+
+Computes `P` and `τ` quantities
+"""
 @parallel_indices (ix, iy) function compute_P_τ!(∇V, P, Vx, Vy, dτP, τxx, τyy, τxy, μ_p, μ_b, _dx, _dy)
     xmax, ymax = size(τxy)
     if ix <= xmax && iy <= ymax
@@ -144,9 +167,14 @@ end
         dVy_dx = (vy1 - vy0) * _dx
         τxy[ix, iy] = 2.0 * μ_b[ix, iy] * 0.5 * (dVx_dy + dVy_dx)
     end
-    return
+    return nothing
 end
 
+"""
+    compute_ResX(ix, iy, τxx, τxy, P, _dx, _dy)
+
+Computes intermediate `dV` result in x
+"""
 @inline function compute_ResX(ix, iy, τxx, τxy, P, _dx, _dy)
     return ((τxx[ix+1, iy] - τxx[ix, iy]) * _dx
             +
@@ -155,6 +183,11 @@ end
             (P[ix+1, iy] - P[ix, iy]) * _dx)
 end
 
+"""
+    compute_ResY(ix, iy, τyy, τxy, P, ρ_vy, Vx, Vy, g_y, _dx, _dy, dt)
+
+Computes intermediate `dV` result in y
+"""
 @inline function compute_ResY(ix, iy, τyy, τxy, P, ρ_vy, Vx, Vy, g_y, _dx, _dy, dt)
     av_inn_y_Vx = 0.25 * (Vx[ix, iy+1] + Vx[ix+1, iy+1] + Vx[ix, iy+2] + Vx[ix+1, iy+2])
     d_xi_2_ρ_vy = ρ_vy[ix+2, iy+1] - ρ_vy[ix, iy+1]
@@ -170,6 +203,11 @@ end
                                             Vy[ix+1, iy+1] * d_yi_2_ρ_vy * 0.5 * _dy)))
 end
 
+"""
+    compute_dV!(dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, _dx, _dy, dt)
+
+Computes `dVxdτ` and `dVydτ`
+"""
 @parallel_indices (ix, iy) function compute_dV!(dVxdτ, dVydτ, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, dampX, dampY, _dx, _dy, dt)
     if ix <= size(dVxdτ, 1) && iy <= size(dVxdτ, 2)
         Rx_temp = compute_ResX(ix, iy, τxx, τxy, P, _dx, _dy)
@@ -179,9 +217,14 @@ end
         Ry_temp = compute_ResY(ix, iy, τyy, τxy, P, ρ_vy, Vx, Vy, g_y, _dx, _dy, dt)
         dVydτ[ix, iy] = dampY * dVydτ[ix, iy] + Ry_temp
     end
-    return
+    return nothing
 end
 
+"""
+    compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
+
+Computes `Vx` and `Vy`
+"""
 @parallel_indices (ix, iy) function compute_V!(Vx, Vy, dVxdτ, dVydτ, dτVx, dτVy)
     if ix <= size(dτVx, 1) && iy <= size(dτVx, 2)
         Vx[ix+1, iy+1] += dτVx[ix, iy] * dVxdτ[ix, iy]
@@ -192,6 +235,11 @@ end
     return
 end
 
+"""
+    compute_Residuals!(Rx, Ry, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, _dx, _dy, dt)
+
+Computes residuals `Rx` and `Ry`
+"""
 @parallel_indices (ix, iy) function compute_Residuals!(Rx, Ry, P, ρ_vy, τxx, τyy, τxy, Vx, Vy, g_y, _dx, _dy, dt)
     if ix <= size(Rx, 1) && iy <= size(Rx, 2)
         Rx[ix, iy] = compute_ResX(ix, iy, τxx, τxy, P, _dx, _dy)
@@ -202,34 +250,64 @@ end
     return
 end
 
-# side boundaries
+"""
+    bc_x_zero!(A::Data.Array)
+
+Implements zero side boundaries
+"""
 @parallel_indices (iy) function bc_x_zero!(A::Data.Array)
     A[1, iy] = 0.0
     A[end, iy] = 0.0
     return
 end
+
+"""
+    bc_x_noflux!(A::Data.Array)
+
+Implements no flux side boundaries
+"""
 @parallel_indices (iy) function bc_x_noflux!(A::Data.Array)
     A[1, iy] = A[2, iy]
     A[end, iy] = A[end-1, iy]
     return
 end
+
+"""
+    bc_x_mirror!(A::Data.Array)
+
+Implements mirror side boundaries
+"""
 @parallel_indices (iy) function bc_x_mirror!(A::Data.Array)
     A[1, iy] = -A[3, iy]
     A[end, iy] = -A[end-2, iy]
     return
 end
 
-# horizontal boundaries
+"""
+    bc_y_zero!(A::Data.Array)
+
+Implements zero horizontal boundaries
+"""
 @parallel_indices (ix) function bc_y_zero!(A::Data.Array)
     A[ix, 1] = 0.0
     A[ix, end] = 0.0
     return
 end
+"""
+    bc_y_noflux!(A::Data.Array)
+
+Implements no flux horizontal boundaries
+"""
 @parallel_indices (ix) function bc_y_noflux!(A::Data.Array)
     A[ix, 1] = A[ix, 2]
     A[ix, end] = A[ix, end-1]
     return
 end
+"""
+    bc_y_mirror!(A::Data.Array)
+
+Implements mirror horizontal boundaries
+"""
 @parallel_indices (ix) function bc_y_mirror!(A::Data.Array)
     A[ix, 1] = -A[ix, 3]
     A[ix, end] = -A[ix, end-2]

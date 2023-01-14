@@ -28,16 +28,28 @@ include("../GlobalGather.jl")
 default(size=(1200, 1000), framestyle=:box, label=false, grid=false, margin=10mm)
 
 """
-    StokesFlow2D(; Nt=20, Nx=35, Ny=45, RAND_MARKER_POS::Bool=true, do_plot::Bool=true, print_info::Bool=true)
+    StokesFlow2D(Nt, Nx, Ny, Lx_glob, Ly_glob, density, viscosity;
+        dimx::Integer=0, dimy::Integer=0, RAND_MARKER_POS::Bool=true, plot_fields_live::Bool=false, 
+        plot_markers_live::Bool=true, save_to_file::Bool=true, print_info::Bool=true, init_MPI::Bool=init_MPI)
 
 Input args:
-Nt              : number of timesteps
-Nx, Ny          : number of grid points
-RAND_MARKER_POS : whether to add random perturbation to initial marker coords
-do_plot         : whether to create Plots
-print_info      : whether any info is printed to console
+`Nt`                  : number of timesteps,
+`Nx`, `Ny`            : number of grid points,
+`Lx_glob`, `Ly_glob`  : global domain size,
+`density`             : density function for marker initialization,
+`viscosity`           : viscosity function for marker initialization,
+`dimx`, `dimy`        : number of ranks in cartesian grid,
+`RAND_MARKER_POS`     : whether to add random perturbation to initial marker coords,
+`plot_fields_live`    : whether to plot fields on the fly,
+`plot_markers_live`   : whether to plot markers on the fly,
+`save_to_file`        : whether to save necessary plotting info to file,
+`print_info`          : whether any info is printed to console,
+`init_MPI`            : whether to initialize MPI.
 
-Output: Currently just Vy, an array of size (Nx, Ny+1)
+Output:
+`Vx`                  : velocity in x-direction,
+`Vy`                  : velocity in y-direction,
+`t_tot`               : simulation end time.
 """
 @views function StokesFlow2D(Nt, Nx, Ny, Lx_glob, Ly_glob, density, viscosity;
     dimx::Integer=0, dimy::Integer=0,
@@ -122,12 +134,12 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
     x_m, y_m, ρ_m, μ_m = initializeMarkersCPU(comm_cart, dims, coords, marker_density::Integer, lx, ly, dx, dy, Nx, Ny, RAND_MARKER_POS)
     setInitialMarkerProperties!(x_m, y_m, ρ_m, μ_m, x0, y0, density, viscosity)
     if save_to_file
-        saveStats!(0, rank, dims)
-        saveMarkers!(0, rank, coords, [lx, ly], dx, dy, x_m, y_m, ρ_m)
-        saveGrid!(0, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
+        saveStats(0, rank, dims)
+        saveMarkers(0, rank, coords, [lx, ly], dx, dy, x_m, y_m, ρ_m)
+        saveGrid(0, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
     end
     if plot_markers_live
-        plot_markers(x_m, y_m, ρ_m, μ_m, dims, dx, dy, lx, ly, rank, comm_cart, 0)
+        plotMarkers(x_m, y_m, ρ_m, μ_m, dims, dx, dy, lx, ly, rank, comm_cart, 0)
     end
     # transform marker arrays to xPU arrays
     x_m = Data.Array(x_m)
@@ -170,7 +182,7 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 
         # exchange markers
         t4 = @elapsed begin
-            x_m, y_m, ρ_m, μ_m = exchangeMarkers!(comm_cart, dims, [lx, ly], dx, dy, Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m))
+            x_m, y_m, ρ_m, μ_m = exchangeMarkers(comm_cart, dims, [lx, ly], dx, dy, Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m))
             # transform marker arrays to xPU arrays
             x_m = Data.Array(x_m)
             y_m = Data.Array(y_m)
@@ -181,15 +193,15 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
         # plot current state
         t5 = @elapsed begin
             if save_to_file
-                saveStats!(t, rank, dims)
-                saveMarkers!(t, rank, coords, [lx, ly], dx, dy, x_m, y_m, ρ_m)
-                saveGrid!(t, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
+                saveStats(t, rank, dims)
+                saveMarkers(t, rank, coords, [lx, ly], dx, dy, x_m, y_m, ρ_m)
+                saveGrid(t, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
             end
             if plot_markers_live
-                plot_markers(Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m), dims, dx, dy, lx, ly, rank, comm_cart, t)
+                plotMarkers(Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m), dims, dx, dy, lx, ly, rank, comm_cart, t)
             end
             if plot_fields_live
-                plot_fields(Array(Vx), Array(Vy), Array(μ_b), Array(P), rank, dims, Nx, Ny, dx, dy, t)
+                plotFields(Array(Vx), Array(Vy), Array(μ_b), Array(P), rank, dims, Nx, Ny, dx, dy, t)
             end
         end
 
@@ -219,11 +231,11 @@ Output: Currently just Vy, an array of size (Nx, Ny+1)
 end
 
 """
-    saveStats!(nt, rank, dims)
+    saveStats(nt, rank, dims)
 
 Saves visualization relevant stats to disk in .mat format
 """
-@views function saveStats!(nt, rank, dims)
+@views function saveStats(nt, rank, dims)
     (rank != 0) && return nothing
 
     file = matopen("viz_out/stats.mat", "w")
@@ -237,11 +249,11 @@ Saves visualization relevant stats to disk in .mat format
 end
 
 """
-    saveMarkers!(nt, rank, coords, localDomain, dx, dy, x_m, y_m, ρ_m)
+    saveMarkers(nt, rank, coords, localDomain, dx, dy, x_m, y_m, ρ_m)
 
 Saves marker positions and densities to disk in .mat format
 """
-@views function saveMarkers!(nt, rank, coords, localDomain, dx, dy, x_m, y_m, ρ_m)
+@views function saveMarkers(nt, rank, coords, localDomain, dx, dy, x_m, y_m, ρ_m)
     file = matopen(string(@sprintf("viz_out/markers_%04d_%04d", nt, rank), ".mat"), "w")
 
     write(file, "x_m", convert.(Float32, Array(x_m) .+ ((localDomain[1] - dx) * coords[1])))
@@ -254,11 +266,11 @@ Saves marker positions and densities to disk in .mat format
 end
 
 """
-    saveGrid!(nt, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
+    saveGrid(nt, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
 
 Saves relevant arrays on various grid points to disk in .mat format
 """
-@views function saveGrid!(nt, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
+@views function saveGrid(nt, rank, x, y, μ_b, x_p, y_p, P, x_vx, y_vx, Vx, x_vy, y_vy, Vy)
     file = matopen(string(@sprintf("viz_out/grid_%04d_%04d", nt, rank), ".mat"), "w")
 
     write(file, "x", convert.(Float32, Array(x)))
@@ -282,9 +294,12 @@ Saves relevant arrays on various grid points to disk in .mat format
     return nothing
 end
 
+"""
+    plotMarkers(x_m, y_m, ρ_m, μ_m, dims, dx, dy, lx, ly, me, comm, step)
 
-
-function plot_markers(x_m, y_m, ρ_m, μ_m, dims, dx, dy, lx, ly, me, comm, step)
+Displays or saves markers
+"""
+@views function plotMarkers(x_m, y_m, ρ_m, μ_m, dims, dx, dy, lx, ly, me, comm, step)
     x_m_glob = zeros(0)
     y_m_glob = zeros(0)
     ρ_m_glob = zeros(0)
@@ -312,7 +327,12 @@ function plot_markers(x_m, y_m, ρ_m, μ_m, dims, dx, dy, lx, ly, me, comm, step
     return
 end
 
-function plot_fields(Vx, Vy, μ_b, P, me, dims, Nx, Ny, dx, dy, step)
+"""
+    plotFields(Vx, Vy, μ_b, P, me, dims, Nx, Ny, dx, dy, step)
+
+Displays or saves the most relevant arrays
+"""
+@views function plotFields(Vx, Vy, μ_b, P, me, dims, Nx, Ny, dx, dy, step)
 
     Vx_glob, Vy_glob = gather_V_grid(Vx, Vy, me, dims, Nx, Ny)
     μ_glob, P_glob = gather_V_grid(μ_b, P, me, dims, Nx, Ny)
@@ -340,7 +360,7 @@ function plot_fields(Vx, Vy, μ_b, P, me, dims, Nx, Ny, dx, dy, step)
             display(plot(p1, p2, p3, p4))
         end
     end
-    return
+    return nothing
 end
 
 """
@@ -351,15 +371,20 @@ Sets initial marker properties `ρ_m` and `μ_m` according to what
 2. viscosity(x_glob,y_glob)
 evaluates to, where x_glob and y_glob describe global coordinates
 """
-function setInitialMarkerProperties!(x_m, y_m, ρ_m, μ_m, x0, y0, density, viscosity)
+@views function setInitialMarkerProperties!(x_m, y_m, ρ_m, μ_m, x0, y0, density, viscosity)
     Nm = size(x_m, 1)
     @assert (size(y_m, 1) == Nm) && (size(ρ_m, 1) == Nm) && (size(μ_m, 1) == Nm)
     ρ_m .= density.(x0 .+ x_m, y0 .+ y_m)
     μ_m .= viscosity.(x0 .+ x_m, y0 .+ y_m)
-    return
+    return nothing
 end
 
-function example_call()
+"""
+    exampleCall()
+
+Launches the main function with exemplary arguments
+"""
+@views function exampleCall()
     Nt = 20
     Nx = 42
     Ny = 42
@@ -396,4 +421,4 @@ function example_call()
         RAND_MARKER_POS=true, plot_fields_live=false, plot_markers_live=true, save_to_file=true, print_info=true, init_MPI=init_MPI)
 end
 
-example_call()
+exampleCall()

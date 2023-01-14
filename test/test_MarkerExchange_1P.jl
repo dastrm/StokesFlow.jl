@@ -40,10 +40,9 @@ x_m, y_m, ρ_m, μ_m = initializeMarkersCPU(comm_cart, dims, coords, marker_dens
 μ_m = rand(size(x_m, 1))
 
 # exchange markers
-x_me, y_me, ρ_me, μ_me = exchangeMarkers!(comm_cart, dims, [lx, ly], dx, dy, Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m))
+x_me, y_me, ρ_me, μ_me = exchangeMarkers(comm_cart, dims, [lx, ly], dx, dy, Array(x_m), Array(y_m), Array(ρ_m), Array(μ_m))
 
 # check whether markers have been altered in any way
-# (this also implicily tests whether initializeMarkersCPU sets no markers outside of the local boundary, because exchangeMarkers! removes those)
 @test all(x_m .≈ x_me)
 @test all(y_m .≈ y_me)
 @test all(ρ_m .≈ ρ_me)

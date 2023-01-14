@@ -19,7 +19,7 @@ end
 
 Compute indices `ix`, `iy` of the top left node with respect to the given 2D position as well as the relative distances
 """
-function topleftIndexRelDist(x_grid_min, y_grid_min, x, y, dx, dy)
+@views function topleftIndexRelDist(x_grid_min, y_grid_min, x, y, dx, dy)
     # TODO: ix,iy may be out of bounds if the grid does not cover (x,y), this is not checked here
     # indices: may be out of bounds if the grid does not cover (x,y)
     ix = floor(Int, (x - x_grid_min) / dx) + 1
@@ -33,7 +33,12 @@ function topleftIndexRelDist(x_grid_min, y_grid_min, x, y, dx, dy)
     return ix, iy, dxij, dyij
 end
 
-function initializeMarkersCPU(comm, dims, coords, marker_density::Integer, lx, ly, dx, dy, Nx, Ny, RAND_MARKER_POS; rng=Random.GLOBAL_RNG)
+"""
+    initializeMarkersCPU(comm, dims, coords, marker_density::Integer, lx, ly, dx, dy, Nx, Ny, RAND_MARKER_POS; rng=Random.GLOBAL_RNG)
+
+Declares marker arrays and initializes marker coordinates
+"""
+@views function initializeMarkersCPU(comm, dims, coords, marker_density::Integer, lx, ly, dx, dy, Nx, Ny, RAND_MARKER_POS; rng=Random.GLOBAL_RNG)
 
     dxm = dx / marker_density
     dym = dy / marker_density
@@ -82,7 +87,7 @@ function initializeMarkersCPU(comm, dims, coords, marker_density::Integer, lx, l
         x_m .+= (rand(rng, Nm) .- 0.5) .* dxm
         y_m .+= (rand(rng, Nm) .- 0.5) .* dym
         if marker_density % 2 == 1
-            x_m, y_m, ρ_m, μ_m = exchangeMarkers!(comm, dims, [lx, ly], dx, dy, x_m, y_m, ρ_m, μ_m)
+            x_m, y_m, ρ_m, μ_m = exchangeMarkers(comm, dims, [lx, ly], dx, dy, x_m, y_m, ρ_m, μ_m)
         end
     end
 
