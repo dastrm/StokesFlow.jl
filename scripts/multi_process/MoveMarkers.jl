@@ -8,12 +8,12 @@ import StaticArrays
 include("common.jl")
 
 function moveMarkersRK4!(x_m, y_m, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dt, lx, ly, dx, dy)
-    
+
     Nm = length(x_m)
     @assert (Nm == length(y_m)) "x and y Marker coords have not same length"
 
     @parallel (1:Nm) moveMarkersRK4_Kernel!(x_m, y_m, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dt, lx, ly, dx, dy)
-    
+
     return
 end
 
@@ -24,43 +24,43 @@ Moves markers according to a fourth order Runge-Kutta method
 """
 @parallel_indices (m) function moveMarkersRK4_Kernel!(x_m, y_m, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dt, lx, ly, dx, dy)
 
-# Runge-Kutta 4th order
-rk4_dt = StaticArrays.@SVector [0.0, 0.5dt, 0.5dt, dt]
-rk4_wt = StaticArrays.@SVector [1.0 / 6.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0]
+    # Runge-Kutta 4th order
+    rk4_dt = StaticArrays.@SVector [0.0, 0.5dt, 0.5dt, dt]
+    rk4_wt = StaticArrays.@SVector [1.0 / 6.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0]
 
-x_old = x_m[m] # old position
-y_old = y_m[m]
-vx_eff, vy_eff = 0.0, 0.0 # 'effective' velocity for explicit update: x_new = x_old + v_eff*dt
-vx_rk, vy_rk = 0.0, 0.0 # velocity at previous/current point
+    x_old = x_m[m] # old position
+    y_old = y_m[m]
+    vx_eff, vy_eff = 0.0, 0.0 # 'effective' velocity for explicit update: x_new = x_old + v_eff*dt
+    vx_rk, vy_rk = 0.0, 0.0 # velocity at previous/current point
 
-for it = 1:4 # loop over points A-D
-    # position of current point based on previous point velocities
-    x_rk = x_old + rk4_dt[it] * vx_rk
-    y_rk = y_old + rk4_dt[it] * vy_rk
+    for it = 1:4 # loop over points A-D
+        # position of current point based on previous point velocities
+        x_rk = x_old + rk4_dt[it] * vx_rk
+        y_rk = y_old + rk4_dt[it] * vy_rk
 
-    # interpolate velocity to current point
-    vx_rk, vy_rk = interpolateV(x_rk, y_rk, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dx, dy)
+        # interpolate velocity to current point
+        vx_rk, vy_rk = interpolateV(x_rk, y_rk, Vx, Vy, x_vx_min, y_vx_min, x_vy_min, y_vy_min, dx, dy)
 
-    # apply RK4 scheme: add up weighted velocities
-    vx_eff += rk4_wt[it] * vx_rk
-    vy_eff += rk4_wt[it] * vy_rk
-end
+        # apply RK4 scheme: add up weighted velocities
+        vx_eff += rk4_wt[it] * vx_rk
+        vy_eff += rk4_wt[it] * vy_rk
+    end
 
-# move particle
-x_new = x_old + vx_eff * dt
-y_new = y_old + vy_eff * dt
+    # move particle
+    x_new = x_old + vx_eff * dt
+    y_new = y_old + vy_eff * dt
 
-# explicitly restrict particles to stay on domain
-# (optional, does not really change anything if BC correctly implemented and dt small enough)
-# !! TODO: CHANGE, if global domain is not 0-lx and 0-ly !!
-x_new = min(max(x_new, 0), lx)
-y_new = min(max(y_new, 0), ly)
+    # explicitly restrict particles to stay on domain
+    # (optional, does not really change anything if BC correctly implemented and dt small enough)
+    # !! TODO: CHANGE, if global domain is not 0-lx and 0-ly !!
+    x_new = min(max(x_new, 0), lx)
+    y_new = min(max(y_new, 0), ly)
 
-# write back updated positions
-x_m[m] = x_new
-y_m[m] = y_new
+    # write back updated positions
+    x_m[m] = x_new
+    y_m[m] = y_new
 
-return nothing
+    return nothing
 end
 
 """

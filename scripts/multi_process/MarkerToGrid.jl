@@ -103,12 +103,12 @@ end
 
 @static if !USE_GPU
     @inline function singleCoreInterpolationCPU!(x_m, y_m, val_m, wt_sum, val_wt_sum, Nx, Ny, x_grid_min, y_grid_min, dx, dy, Nm)
-        for m=1:1:Nm
+        for m = 1:1:Nm
 
             xm = x_m[m]
             ym = y_m[m]
             val = val_m[m]
-        
+
             # get indices and relative distance to top left node w.r.t marker m.
             # may be 0, when the marker is further left or up than the first grid node
             ix, iy, dxmij, dymij = topleftIndexRelDist(x_grid_min, y_grid_min, xm, ym, dx, dy)

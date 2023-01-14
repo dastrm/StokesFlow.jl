@@ -33,7 +33,7 @@ USE_GPU = false
                 @test success(r)
             elseif f == "test_MarkerExchange_varP.jl"
                 # run this test with up to 9 processors
-                for npr = [1,2,3,4,6,8,9]
+                for npr = [1, 2, 3, 4, 6, 8, 9]
                     r = run(ignorestatus(cmd(npr)))
                     @test success(r)
                 end
