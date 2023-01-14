@@ -451,7 +451,7 @@ function example_call()
     init_MPI = !MPI.Initialized()
     
     return StokesFlow2D(Nt, Nx, Ny, Lx_glob, Ly_glob, density, viscosity;
-        RAND_MARKER_POS=true, plot_fields_live=true, plot_markers_live=true, save_to_file=true, print_info=true, init_MPI=init_MPI)
+        RAND_MARKER_POS=true, plot_fields_live=false, plot_markers_live=true, save_to_file=true, print_info=true, init_MPI=init_MPI)
 end
 
 example_call()
