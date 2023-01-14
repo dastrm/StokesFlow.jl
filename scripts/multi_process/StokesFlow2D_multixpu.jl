@@ -343,64 +343,6 @@ function plot_fields(Vx, Vy, μ_b, P, me, dims, Nx, Ny, dx, dy, step)
     return
 end
 
-
-function initializeMarkersCPU(comm, dims, coords, marker_density::Integer, lx, ly, dx, dy, Nx, Ny, RAND_MARKER_POS; rng=Random.GLOBAL_RNG)
-
-    dxm = dx / marker_density
-    dym = dy / marker_density
-
-    xloBNDRY = coords[1] == 0
-    xhiBNDRY = coords[1] == dims[1] - 1
-    yloBNDRY = coords[2] == 0
-    yhiBNDRY = coords[2] == dims[2] - 1
-
-    x_less_hi = marker_density % 2 == 0 ? dxm / 2 : dxm
-    y_less_hi = marker_density % 2 == 0 ? dym / 2 : dym
-
-    x_less_lo = marker_density % 2 == 0 ? dxm / 2 : 0.0
-    y_less_lo = marker_density % 2 == 0 ? dym / 2 : 0.0
-
-    xlimlo = xloBNDRY ? dxm / 2 : dx / 2 + x_less_lo
-    xlimhi = xhiBNDRY ? lx - dxm / 2 : lx - dx / 2 - x_less_hi
-    ylimlo = yloBNDRY ? dym / 2 : dy / 2 + y_less_lo
-    ylimhi = yhiBNDRY ? ly - dym / 2 : ly - dy / 2 - y_less_hi
-
-    lo_less = Int(ceil(marker_density / 2))
-    hi_less = Int(floor(marker_density / 2))
-
-    Nmx = marker_density * (Nx - 1) - (xloBNDRY ? 0 : lo_less) - (xhiBNDRY ? 0 : hi_less)
-    Nmy = marker_density * (Ny - 1) - (yloBNDRY ? 0 : lo_less) - (yhiBNDRY ? 0 : hi_less)
-    Nm = Nmx * Nmy
-
-    xcoords = LinRange(xlimlo, xlimhi, Nmx)
-    ycoords = LinRange(ylimlo, ylimhi, Nmy)
-
-    x_m = zeros(Nm)
-    y_m = zeros(Nm)
-    ρ_m = zeros(Nm)
-    μ_m = zeros(Nm)
-
-    m = 1
-    for ix = 1:Nmx
-        for iy = 1:Nmy
-            x_m[m] = xcoords[ix]
-            y_m[m] = ycoords[iy]
-            m += 1
-        end
-    end
-
-    if RAND_MARKER_POS
-        x_m .+= (rand(rng, Nm) .- 0.5) .* dxm
-        y_m .+= (rand(rng, Nm) .- 0.5) .* dym
-        if marker_density % 2 == 1
-            x_m, y_m, ρ_m, μ_m = exchangeMarkers!(comm, dims, [lx, ly], dx, dy, x_m, y_m, ρ_m, μ_m)
-        end
-    end
-
-    return x_m, y_m, ρ_m, μ_m
-end
-
-
 """
     setInitialMarkerProperties!(x_m, y_m, ρ_m, μ_m, x0, y0, density, viscosity)
 

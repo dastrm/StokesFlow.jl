@@ -33,27 +33,42 @@ function topleftIndexRelDist(x_grid_min, y_grid_min, x, y, dx, dy)
     return ix, iy, dxij, dyij
 end
 
-"""
-    setInitialMarkerCoords!(coords, dims, dx, dy, x_m, y_m, Nmx, Nmy, xlims, ylims, RAND_MARKER_POS::Bool; rng=Random.GLOBAL_RNG)
+function initializeMarkersCPU(comm, dims, coords, marker_density::Integer, lx, ly, dx, dy, Nx, Ny, RAND_MARKER_POS; rng=Random.GLOBAL_RNG)
 
-Sets initial coordinates and properties of the markers
+    dxm = dx / marker_density
+    dym = dy / marker_density
 
-`x` and `y` are coordinates of the basic grid nodes
+    xloBNDRY = coords[1] == 0
+    xhiBNDRY = coords[1] == dims[1] - 1
+    yloBNDRY = coords[2] == 0
+    yhiBNDRY = coords[2] == dims[2] - 1
 
-`xlims` and `ylims` contain domain lower and upper limits at start and end indices respectively
-"""
-@views function setInitialMarkerCoords!(coords, dims, dx, dy, x_m, y_m, Nmx, Nmy, xlims, ylims, RAND_MARKER_POS::Bool; rng=Random.GLOBAL_RNG)
+    x_less_hi = marker_density % 2 == 0 ? dxm / 2 : dxm
+    y_less_hi = marker_density % 2 == 0 ? dym / 2 : dym
+
+    x_less_lo = marker_density % 2 == 0 ? dxm / 2 : 0.0
+    y_less_lo = marker_density % 2 == 0 ? dym / 2 : 0.0
+
+    xlimlo = xloBNDRY ? dxm / 2 : dx / 2 + x_less_lo
+    xlimhi = xhiBNDRY ? lx - dxm / 2 : lx - dx / 2 - x_less_hi
+    ylimlo = yloBNDRY ? dym / 2 : dy / 2 + y_less_lo
+    ylimhi = yhiBNDRY ? ly - dym / 2 : ly - dy / 2 - y_less_hi
+
+    lo_less = Int(ceil(marker_density / 2))
+    hi_less = Int(floor(marker_density / 2))
+
+    Nmx = marker_density * (Nx - 1) - (xloBNDRY ? 0 : lo_less) - (xhiBNDRY ? 0 : hi_less)
+    Nmy = marker_density * (Ny - 1) - (yloBNDRY ? 0 : lo_less) - (yhiBNDRY ? 0 : hi_less)
     Nm = Nmx * Nmy
-    @assert size(x_m, 1) == (Nm)
-    @assert size(y_m, 1) == (Nm)
-    xlimslower = coords[1] == 0 ? xlims[1] : xlims[1] + dx / 2
-    xlimsupper = coords[1] == dims[1] - 1 ? xlims[end] : xlims[end] - dx / 2
-    ylimslower = coords[2] == 0 ? ylims[1] : ylims[1] + dy / 2
-    ylimsupper = coords[2] == dims[2] - 1 ? ylims[end] : ylims[end] - dy / 2
-    dxm = (xlimsupper - xlimslower) / Nmx
-    dym = (ylimsupper - ylimslower) / Nmy
-    xcoords = LinRange(xlimslower + 0.5dxm, xlimsupper - 0.5dxm, Nmx)
-    ycoords = LinRange(ylimslower + 0.5dym, ylimsupper - 0.5dym, Nmy)
+
+    xcoords = LinRange(xlimlo, xlimhi, Nmx)
+    ycoords = LinRange(ylimlo, ylimhi, Nmy)
+
+    x_m = zeros(Nm)
+    y_m = zeros(Nm)
+    ρ_m = zeros(Nm)
+    μ_m = zeros(Nm)
+
     m = 1
     for ix = 1:Nmx
         for iy = 1:Nmy
@@ -62,9 +77,14 @@ Sets initial coordinates and properties of the markers
             m += 1
         end
     end
+
     if RAND_MARKER_POS
         x_m .+= (rand(rng, Nm) .- 0.5) .* dxm
         y_m .+= (rand(rng, Nm) .- 0.5) .* dym
+        if marker_density % 2 == 1
+            x_m, y_m, ρ_m, μ_m = exchangeMarkers!(comm, dims, [lx, ly], dx, dy, x_m, y_m, ρ_m, μ_m)
+        end
     end
-    return nothing
+
+    return x_m, y_m, ρ_m, μ_m
 end
