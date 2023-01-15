@@ -14,25 +14,24 @@ Also, every major function is tested by an extensive test suite.
 
 ## Content
 
-TODO update
-
-- [StokesFlow.jl](#stokesflowjl)
-  - [Introduction](#introduction)
-  - [Content](#content)
-  - [Script list](#script-list)
-  - [Usage](#usage)
-  - [2D Stokes and continuity](#2d-stokes-and-continuity)
-  - [Implementation](#implementation)
-  - [Results](#results)
-  - [Discussion](#discussion)
-  - [TODO](#todo)
+- [Script list](#script-list)
+- [Usage](#usage)
+- [2D Stokes and Continuity Equations](#2d-stokes-and-continuity-equations)
+- [Implementation](#implementation)
+  - [General structure](#general-structure)
+  - [Details of Marker Methods](#details-of-marker-methods)
+  - [Details of Stokes Solver](#details-of-stokes-solver)
+- [Results and Discussion](#results-and-discussion)
+  - [Visualizations](#visualizations)
+  - [Scaling](#scaling)
+  - [Convergence](#convergence)
+- [Open Issues and Further Work](#open-issues-and-further-work)
 
 ## Script list
-TODO update
 
-TODO link these files where mentioned
+TODO: update list
 
-TODO figure enumeration
+TODO: what to delete?
 
 The [scripts](/scripts/) folder contains the following Julia scripts:
 - [`StokesFlow2D_multigpu.jl`](scripts/StokesFlow2D_multigpu.jl), main script
@@ -59,8 +58,7 @@ The resulting figures can be found in the folder `viz_out`.
 
 Additionally, the script allows for live visualization during computation if desired.
 
-## 2D Stokes and Continuity
-### Equations and Boundary Conditions
+## 2D Stokes and Continuity Equations
 
 The **2D Stokes and continuity** equations, assuming earth's gravity in positive $y$-direction, are:
 
@@ -146,7 +144,7 @@ where
 * $dx$, $dy$ are the distances between grid points
 * $\mathrm{dxij}_m$, $\mathrm{dyij}_m$ are the distances between marker $m$ and grid point ($i$,$j$)
 
-| ![Domain](figures/markerGrid.png) |
+| ![markerGrid](figures/markerGrid.png) |
 | :-----------------------------------: |
 | Fig. 2: Geometry of 'Marker to Grid' interpolation. |
 
@@ -161,11 +159,11 @@ $$
 where
 * $n$ loops over the four adjacent nodes
 * $\mathrm{dxij}_n$, $\mathrm{dyij}_n$ are the distances between point $m$ and grid point $n$
-* $\mathrm{corr}_x$, $\mathrm{corr}_y$ are chosen to match the so-called **continuity-based velocity interpolation** (for more information, see e.g. [here](https://presentations.copernicus.org/EGU21/EGU21-15308_presentation-h252958.pdf)). Essentially, this is a second order term coming from extending the 'stencil' by two nodes:
+* $\mathrm{corr}_x$, $\mathrm{corr}_y$ are chosen to match the so-called **continuity-based velocity interpolation** (for more information, see e.g. [here](https://presentations.copernicus.org/EGU21/EGU21-15308_presentation-h252958.pdf)). The benefit is that 'gaps' between markers are opening much slower. Essentially, this correction is a second order term coming from extending the 'stencil' by two nodes:
   * $V_x$ : depending on whether $m$ is located in the left or right half of the cell, consider additional left or right nodes
   * $V_y$ : depending on whether $m$ is located in the upper or lower half of the cell, consider additional upper or lower nodes
 
-| ![Domain](figures/gridMarker.png) |
+| ![gridMarker](figures/gridMarker.png) |
 | :-----------------------------------: |
 | Fig. 3: Geometry of 'Grid to Entire Domain' interpolation. |
 
@@ -183,69 +181,68 @@ This so-called **Free surface stabilization** implicitly advects the density fie
 
 | ![drunkensailor](figures/without_stabilization.gif) |
 | :-----------------------------------: |
-| Fig. x: Markers with Drunken Sailor Instability. |
+| Fig. 4: Markers with Drunken Sailor Instability. |
 
 | ![nodrunkensailor](figures/with_stabilization.gif) |
 | :-----------------------------------: |
-| Fig. x: Markers with Free Surface Stabilization. |
+| Fig. 5: Markers with Free Surface Stabilization. |
 
 ## Results and Discussion
 
-| ![markersref](figures/markersref.gif) |
-| :-----------------------------------: |
-|           Fig. 4: Markers.            |
-
-| ![gridref](figures/gridref.gif) |
-| :-----------------------------: |
-|          Fig. 5: Grid.          |
-
-<figure>
-    <img src="figures/markersref.gif">
-    <figcaption>Fig. 3: Markers.<figcaption>
-<figure>
-
 ### Visualizations
 
-TODO show some nice results
+Fig. 6 shows the evolution of grid values of the same problem as Fig. 5.
+Paremeters are as follows and identical to the function `exampleCall()` in [`StokesFlow2D_multixpu.jl`](scripts/multi_process/StokesFlow2D_multixpu.jl):
+
+```Julia
+Nt = 20
+Nx = 42
+Ny = 42
+Lx_glob = 10
+Ly_glob = 10
+
+μ_air, μ_matrix, μ_plume = 1e-2, 1e0, 1e-1  # Viscosity
+ρ_air, ρ_matrix, ρ_plume = 1e-3, 3.3, 3.2   # Density
+plume_x, plume_y = Lx_glob / 2, Ly_glob / 2 # plume midpoint
+plume_r = min(Lx_glob, Ly_glob) / 5         # plume radius
+air_height = 0.2 * Ly_glob                  # height of the 'sticky air' layer on top
+```
+
+| ![grid_properties](figures/grid_properties.gif) |
+| :-----------------------------: |
+| Fig. 6: Evolution of grid values. |
 
 ### Scaling
-TODO explain computation time
+Even on a small grid, the Stokes Solver takes over `98%` of the entire computation time. For this reason, scaling analysis was only performed with the Stokes Solver. The script [`StokesSolver_scaling.jl`](scripts/multi_process/StokesSolver_scaling.jl) produces the following results.
 
 First, **strong scaling** on a single GPU was measured. `T_eff` might seem rather small, however keep in mind that the solver needs to access many more arrays than the ideal lower bound. Also, Kernel fusing is not always possible due to dependencies, which increases memory accesses as well.
 
 As expected, we can nicely observe rising effective throughput with increasing the grid size.
 
-| ![gridref](figures/strongScaling.png) |
+| ![strongscaling](figures/strongScaling.png) |
 | :-----------------------------: |
-| Fig. 5: Strong Scaling on 1 GPU. |
+| Fig. 7: Strong Scaling on 1 GPU. |
 
 Second, **weak scaling** measurements were also performed with up to 64 processes, with the best local grid size. We can see that the runtime is never increased by more than `2.5%`, which is really nice. The communication/computation overlap must work well! Weirdly, even a reduced runtime can be observed with 4 ranks.
 
-| ![gridref](figures/weakScaling.png) |
+| ![weakscaling](figures/weakScaling.png) |
 | :-----------------------------: |
-| Fig. 5: Highest, lowest and mean Relative Runtime of all ranks, on up to 64 GPUs. |
+| Fig. 8: Highest, lowest and mean Relative Runtime of all ranks, on up to 64 GPUs. |
 
 
 ### Convergence
 
-TODO make residual plot
-
+An example of the Stokes Solver's error evolution is plotted below. First, we can observe reasonable convergence, however after some time, it gets much slower, which is suboptimal.
+| ![err_evo](figures/err_evo.png) |
+| :-----------------------------: |
+| Fig. 9: Error evolution of the Stokes Solver. |
 
 ## Open Issues and Further Work
 
-* The Stokes solver converges rather slow, caused by the big range of material properties which can span several orders of magnitude (e.g. density of *sticky air* vs. *mantle*). Some improvement can certainly be achieved with more parameter tuning, slightly smoothing the material property arrays, or even altogether implementing the iterations differently. However one must pay special attention to avoid blowups of the solution, which is a delicate balance.
+* The Stokes solver converges rather slow, likely caused by the big range of material properties which can span several orders of magnitude (e.g. density of *sticky air* vs. *mantle*). Some improvement can certainly be achieved with more parameter tuning, slightly smoothing the material property arrays, or even altogether implementing the iterations differently. However one must pay special attention to avoid blowups of the solution, which is a delicate balance.
 
 * For the specific parameter combination of **both** `USE_GPU=true` **and** `--check-bounds=yes`, the results of the Stokes Solver are different, and thus the reference tests don't pass. This is very strange, especially since no bounds check ever fails.
 
 * To model actually interesting phenomena, the physics could be extended in various ways. For example, coupling with the heat equation, different heating mechanisms and heat-dependent changes in material properties could be implemented.
 
-* Advanced marker functionality such as injecting markers where there are too few, is not implemented.
-
-## TODO
-
-* do some performance evaluations: what is slowest etc.
-* write README:
-    * Equations, Methods,... with references
-    * How to run the code
-    * Figures, Discussion of results and performance
-    * further work
+* Advanced marker functionality, such as injecting markers where there are too few, is not implemented.
