@@ -92,3 +92,19 @@ Declares marker arrays and initializes marker coordinates
 
     return x_m, y_m, ρ_m, μ_m
 end
+
+"""
+    setInitialMarkerProperties!(x_m, y_m, ρ_m, μ_m, x0, y0, density, viscosity)
+
+Sets initial marker properties `ρ_m` and `μ_m` according to what
+1. density(x_glob,y_glob)
+2. viscosity(x_glob,y_glob)
+evaluates to, where x_glob and y_glob describe global coordinates
+"""
+@views function setInitialMarkerProperties!(x_m, y_m, ρ_m, μ_m, x0, y0, density, viscosity)
+    Nm = size(x_m, 1)
+    @assert (size(y_m, 1) == Nm) && (size(ρ_m, 1) == Nm) && (size(μ_m, 1) == Nm)
+    ρ_m .= density.(x0 .+ x_m, y0 .+ y_m)
+    μ_m .= viscosity.(x0 .+ x_m, y0 .+ y_m)
+    return nothing
+end

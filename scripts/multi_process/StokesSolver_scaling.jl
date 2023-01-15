@@ -1,11 +1,7 @@
 using ParallelStencil
 using ParallelStencil.FiniteDifferences2D
 
-const USE_GPU = if haskey(ENV, "USE_GPU")
-    ENV["USE_GPU"] == "true" ? true : false
-else
-    false
-end
+const USE_GPU = true
 
 @static if USE_GPU
     @init_parallel_stencil(CUDA, Float64, 2)
@@ -33,6 +29,11 @@ Calculates the effective memory throughput of the Stokes solver
 @views function timeStokesSolver(n)
     Nx, Ny = n, n
     Lx_glob, Ly_glob = 10, 10
+    μ_air, μ_matrix, μ_plume = 1e-2, 1e0, 1e-1  # Viscosity
+    ρ_air, ρ_matrix, ρ_plume = 1e-3, 3.3, 3.2   # Density
+    plume_x, plume_y = Lx_glob / 2, Ly_glob / 2 # plume midpoint
+    plume_r = min(Lx_glob, Ly_glob) / 5         # plume radius
+    air_height = 0.2 * Ly_glob                  # height of the 'sticky air' layer on top
     RAND_MARKER_POS = true
 
     function density(x, y)
@@ -67,6 +68,8 @@ Calculates the effective memory throughput of the Stokes solver
     dy = Ly_glob / (ny_g() - 1)
     lx = (Nx - 1) * dx                # local domain size
     ly = (Ny - 1) * dy
+    x0 = coords[1] * (Nx - 2) * dx    # offset of local coordinates
+    y0 = coords[2] * (Ny - 2) * dy
 
     # random numbers for initial marker postions
     Random.seed!(rank)            # seed default RNG for random marker positions
@@ -121,7 +124,7 @@ Calculates the effective memory throughput of the Stokes solver
 
     # --- MARKER ARRAYS & INITIAL CONDITIONS (MARKER PROPERTIES) ---
     x_m, y_m, ρ_m, μ_m = initializeMarkersCPU(comm_cart, dims, coords, marker_density::Integer, lx, ly, dx, dy, Nx, Ny, RAND_MARKER_POS)
-    #setInitialMarkerProperties!(x_m, y_m, ρ_m, μ_m, x0, y0, density, viscosity)
+    setInitialMarkerProperties!(x_m, y_m, ρ_m, μ_m, x0, y0, density, viscosity)
 
     # transform marker arrays to xPU arrays
     x_m = Data.Array(x_m)
@@ -139,13 +142,13 @@ Calculates the effective memory throughput of the Stokes solver
     # calculate velocities on grid
     GC.gc()
     GC.enable(false)
-    _, T_eff = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p, τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
-        Vx_small, Vy_small, g_y, dx, dy, Nx, Ny, dt, maxdisp, comm_cart; use_free_surface_stabilization=true, ϵ=1e-5, print_info=false)
+    _, T_eff, runtime = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p, τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
+        Vx_small, Vy_small, g_y, dx, dy, Nx, Ny, dt, maxdisp, comm_cart; use_free_surface_stabilization=true, ϵ=1e-5, print_info=false, iterMax=50)
     GC.enable(true)
 
     finalize_global_grid(; finalize_MPI=false)
 
-    return T_eff
+    return T_eff, runtime
 end
 
 """
@@ -160,7 +163,7 @@ Performs strong scaling with one process and saves the results in a PNG image
     all_n = [2^(5 + i) for i = 0:5]
     T_effs = []
     for n = all_n
-        T_eff = timeStokesSolver(n)
+        T_eff, _ = timeStokesSolver(n)
         push!(T_effs, T_eff)
         @show n, T_eff
     end
@@ -182,20 +185,20 @@ Performs one weak scaling run with a given amount of processes
     MPI.Init()
     # run sequentally with 1,4,16,25,64 processes
 
-    n = 2^10 # TODO: best n according to strong scaling
-    T_eff = timeStokesSolver(n)
+    n = 2^6 # TODO: best n according to strong scaling
+    _, runtime = timeStokesSolver(n)
 
-    T_effs_min = MPI.Reduce(T_eff, MPI.MIN, 0, MPI.COMM_WORLD)
-    T_effs_sum = MPI.Reduce(T_eff, MPI.SUM, 0, MPI.COMM_WORLD)
-    T_effs_max = MPI.Reduce(T_eff, MPI.MAX, 0, MPI.COMM_WORLD)
+    runtime_min = MPI.Reduce(runtime, MPI.MIN, 0, MPI.COMM_WORLD)
+    runtime_sum = MPI.Reduce(runtime, MPI.SUM, 0, MPI.COMM_WORLD)
+    runtime_max = MPI.Reduce(runtime, MPI.MAX, 0, MPI.COMM_WORLD)
 
     rank = MPI.Comm_rank(MPI.COMM_WORLD)
     if (rank == 0)
         np = MPI.Comm_size(MPI.COMM_WORLD)
-        T_effs_avg = T_effs_sum / np
-        @show np, T_effs_min
-        @show np, T_effs_avg
-        @show np, T_effs_max
+        runtime_avg = runtime_sum / np
+        @show np, runtime_min
+        @show np, runtime_avg
+        @show np, runtime_max
     end
 
     MPI.Finalize()
@@ -211,16 +214,16 @@ Saves the previously obtained weak scaling results in a PNG image
 @views function weakScalingPlot()
     np = [1, 4, 16, 25, 64]
 
-    T_effs_min = [1.0, 2.0, 3.0, 4.0, 5.0] # TODO: insert values from weakScaling()
-    T_effs_avg = [1.0, 2.0, 3.0, 4.0, 5.0] # TODO: insert values from weakScaling()
-    T_effs_max = [1.0, 2.0, 3.0, 4.0, 5.0] # TODO: insert values from weakScaling()
-    T_effs_min_rel = T_effs_min ./ T_effs_min[1]
-    T_effs_avg_rel = T_effs_avg ./ T_effs_avg[1]
-    T_effs_max_rel = T_effs_max ./ T_effs_max[1]
+    runtime_min = [1.0, 2.0, 3.0, 4.0, 5.0] # TODO: insert values from weakScaling()
+    runtime_avg = [1.0, 2.0, 3.0, 4.0, 5.0] # TODO: insert values from weakScaling()
+    runtime_max = [1.0, 2.0, 3.0, 4.0, 5.0] # TODO: insert values from weakScaling()
+    runtime_min_rel = runtime_min ./ runtime_min[1]
+    runtime_avg_rel = runtime_avg ./ runtime_avg[1]
+    runtime_max_rel = runtime_max ./ runtime_max[1]
 
-    plot(np, T_effs_min_rel; label="min")
-    plot!(np, T_effs_avg_rel; label="avg")
-    p = plot!(np, T_effs_max_rel; xlabel="np", ylabel="T_eff_rel", label="max", title="Weak Scaling")
+    plot(np, runtime_min_rel; label="min")
+    plot!(np, runtime_avg_rel; label="avg")
+    p = plot!(np, runtime_max_rel; xlabel="np", ylabel="runtime_rel", label="max", title="Weak Scaling")
     png(p, "weakScaling.png")
 
     return nothing

@@ -105,7 +105,7 @@ for i = eachindex(dimx)
     g_y = 9.81
 
     # call the solver
-    dt, T_eff = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
+    dt, T_eff, runtime = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
         τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_small, Vy_small,
         g_y, dx, dy, Nx, Ny,
         dt, maxdisp, comm_cart; use_free_surface_stabilization=true,

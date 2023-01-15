@@ -12,7 +12,7 @@ Implements a parallel pseudo-transcient Stokes solver
 `Vx_s` & `Vy_s` denote the 'small' (unpadded) arrays, Vx_pad, Vy_pad are padded.
 """
 @views function solveStokes!(P, Vx_pad, Vy_pad, ρ_vy, μ_b, μ_p, τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_s, Vy_s,
-    g_y, dx, dy, Nx, Ny, dt, maxdisp, comm; use_free_surface_stabilization::Bool=true, ϵ=1e-8, print_info::Bool=true)
+    g_y, dx, dy, Nx, Ny, dt, maxdisp, comm; use_free_surface_stabilization::Bool=true, ϵ=1e-8, print_info::Bool=true, iterMax=100000)
 
     Vdmp = 4.0
     Vsc = 0.45                  # relaxation paramter for the momentum equations pseudo-timesteps limiters
@@ -40,7 +40,6 @@ Implements a parallel pseudo-transcient Stokes solver
     err = 2ϵ
     iter = 1
     niter = 0
-    iterMax = 100000
     while err > ϵ && iter <= iterMax
         if (iter == itert1)
             t1 = Base.time()
@@ -77,12 +76,12 @@ Implements a parallel pseudo-transcient Stokes solver
         iter += 1
         niter += 1
     end
-    t2 = Base.time()
-    t_it = (t2 - t1) / (niter - itert1 + 1)
+    runtime = Base.time() - t1
+    t_it = runtime / (niter - itert1 + 1)
     A_eff = (3 * 2) / 1e9 * Nx * Ny * sizeof(Data.Number)
     T_eff = A_eff / t_it
     if print_info
-        @printf("Total steps = %d, err = %1.3e, time = %1.3e sec (@ T_eff = %1.2f GB/s) \n", niter, err, t2 - t1, round(T_eff, sigdigits=2))
+        @printf("Total steps = %d, err = %1.3e, time = %1.3e sec (@ T_eff = %1.2f GB/s) \n", niter, err, runtime, round(T_eff, sigdigits=2))
     end
 
     # Since update_halo!() from ImplicitGlobalGrid can only update the first/last index in any dimension,
@@ -94,7 +93,7 @@ Implements a parallel pseudo-transcient Stokes solver
     @parallel (1:size(Vy_pad, 1)) bc_y_mirror!(Vy_pad)
     update_halo!(Vx_pad, Vy_pad)
 
-    return compute_dt(Vx_s, Vy_s, maxdisp, dx, dy, comm), T_eff
+    return compute_dt(Vx_s, Vy_s, maxdisp, dx, dy, comm), T_eff, runtime
 end
 
 """

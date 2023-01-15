@@ -2,7 +2,7 @@ using ParallelStencil
 using ParallelStencil.FiniteDifferences2D
 if !@isdefined(USE_GPU)
     const USE_GPU = if haskey(ENV, "USE_GPU")
-    ENV["USE_GPU"] == "true" ? true : false
+        ENV["USE_GPU"] == "true" ? true : false
     else
         false
     end
@@ -168,7 +168,7 @@ Output:
 
         # calculate velocities on grid
         t2 = @elapsed begin
-            dt, _ = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
+            dt, _, _ = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p,
                 τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_small, Vy_small,
                 g_y, dx, dy, Nx, Ny,
                 dt, maxdisp, comm_cart; use_free_surface_stabilization=true,
@@ -230,7 +230,7 @@ Output:
 
     # create return values and finalize
     Vx_glob, Vy_glob = gather_V_grid(Array(Vx), Array(Vy), rank, dims, Nx, Ny)
-    finalize_global_grid(;finalize_MPI=finalize_MPI)
+    finalize_global_grid(; finalize_MPI=finalize_MPI)
     return Vx_glob, Vy_glob, t_tot
 end
 
@@ -364,22 +364,6 @@ Displays or saves the most relevant arrays
             display(plot(p1, p2, p3, p4))
         end
     end
-    return nothing
-end
-
-"""
-    setInitialMarkerProperties!(x_m, y_m, ρ_m, μ_m, x0, y0, density, viscosity)
-
-Sets initial marker properties `ρ_m` and `μ_m` according to what
-1. density(x_glob,y_glob)
-2. viscosity(x_glob,y_glob)
-evaluates to, where x_glob and y_glob describe global coordinates
-"""
-@views function setInitialMarkerProperties!(x_m, y_m, ρ_m, μ_m, x0, y0, density, viscosity)
-    Nm = size(x_m, 1)
-    @assert (size(y_m, 1) == Nm) && (size(ρ_m, 1) == Nm) && (size(μ_m, 1) == Nm)
-    ρ_m .= density.(x0 .+ x_m, y0 .+ y_m)
-    μ_m .= viscosity.(x0 .+ x_m, y0 .+ y_m)
     return nothing
 end
 
