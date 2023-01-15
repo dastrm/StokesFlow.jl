@@ -2,7 +2,7 @@
 
 [![CI action](https://github.com/dastrm/StokesFlow.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/dastrm/StokesFlow.jl/actions/workflows/CI.yml)
 
-Multi-xPU solver for the 2D Stokes & continuity equations, with variable density and viscosity, written in Julia. Material properties are advected using marker-in-cell techniques.
+Multi-xPU solver for the 2D Stokes & continuity equations with variable density and viscosity written in Julia. Material properties are advected using marker-in-cell techniques.
 
 ## Introduction
 
@@ -21,7 +21,7 @@ Also, every major function is tested by an extensive test suite.
   - [Usage](#usage)
   - [2D Stokes and Continuity Equations](#2d-stokes-and-continuity-equations)
   - [Implementation](#implementation)
-    - [General structure](#general-structure)
+    - [General Structure](#general-structure)
     - [Details of Marker Methods](#details-of-marker-methods)
     - [Details of Stokes Solver](#details-of-stokes-solver)
   - [Results and Discussion](#results-and-discussion)
@@ -99,7 +99,7 @@ the other variables (grid or constant) describe
 * $g$ : gravity of earth
 * $\tau$ : deviatoric stress tensor.
 
-The **Boundary conditions** implemented here are **free slip** on all four boundaries, i.e.
+The **boundary conditions** implemented here are **free slip** on all four boundaries, i.e.
 
 $$
 V_x = 0, \ \ \frac{\partial V_y}{\partial x} = 0 \ \ \ \ \mathrm{on\ vertical\ boundaries}
@@ -109,11 +109,11 @@ $$
 V_y = 0, \ \ \frac{\partial V_x}{\partial y} = 0 \ \ \ \ \mathrm{on\ horizontal\ boundaries}
 $$
 
-The **Initial Conditions**, i.e. the initial density and viscosity distributions, must also be specified. The function `exampleCall()` in the [StokesSolver_multixpu.jl](scripts/StokesSolver_multixpu.jl) script, implements a toy model of a plume rising in the earth's mantle. However, the low density and viscosity of the top 'air' causes some instability ('drunken sailor instability'), which is explained in the section [Details of Stokes Solver](#details-of-stokes-solver).
+The **initial conditions**, i.e. the initial density and viscosity distributions, must also be specified. The function `exampleCall()` in the [StokesSolver_multixpu.jl](scripts/StokesSolver_multixpu.jl) script, implements a toy model of a plume rising in the earth's mantle. However, the low density and viscosity of the top 'air' causes some instability ('drunken sailor instability'), which is explained in the section [Details of Stokes Solver](#details-of-stokes-solver).
 
 ## Implementation
 
-### General structure
+### General Structure
 
 After initialization, the computation loop's content is rather simple:
 
@@ -124,7 +124,7 @@ After initialization, the computation loop's content is rather simple:
 
 All the computation (the first three points) are implemented to fully run on either CPUs or GPUs.
 
-The local domains, as well as overlaps and possible marker locations for each process are summarized in Fig.1.
+The local domains, as well as overlaps and possible marker locations for each process are summarized in Fig. 1.
 
 |                     ![Domain](figures/domain.png)                      |
 | :--------------------------------------------------------------------: |
@@ -135,7 +135,7 @@ The local domains, as well as overlaps and possible marker locations for each pr
 The interpolation of marker properties to the grid is implemented in the `bilinearMarkerToGrid!(..)` method in [MarkerToGrid.jl](scripts/MarkerToGrid.jl). As the name suggests, the value on each grid point is determined by **bilinear** interpolation from all markers in the four cells adjacent to grid point:
 
 $$
-\mathrm{val}_{ij} = \frac{\sum_{m=1}^{M}{w_m\mathrm{val}_m}}{\sum_{m=1}^{M}{w_m}}
+\mathrm{val}_{ij} = \frac{\displaystyle\sum_{m=1}^{M}{w_m\mathrm{val}_m}}{\displaystyle\sum_{m=1}^{M}{w_m}}
 $$
 
 $$
@@ -170,7 +170,7 @@ where
 | :--------------------------------------------------------: |
 | Fig. 3: Geometry of 'grid to entire domain' interpolation. |
 
-Since markers are allowed to move for up to half a cell per timestep, this **continuity-based velocity interpolation** makes it necessary to extend the grid velocity arrays $V_x$ and $V_y$ by two nodes in $x$ and $y$ direction, respectively (cf. Fig.1). Otherwise, the correction term could not easily be determined on the 'ghost' boundaries between processes.
+Since markers are allowed to move for up to half a cell per time step, this **continuity-based velocity interpolation** makes it necessary to extend the grid velocity arrays $V_x$ and $V_y$ by two nodes in $x$ and $y$ direction, respectively (cf. Fig. 1). Otherwise, the correction term could not easily be determined on the 'ghost' boundaries between processes.
 
 ### Details of Stokes Solver
 
@@ -178,7 +178,7 @@ The Stokes solver is implemented in the `solveStokes!(..)` method in [StokesSolv
 
 * **free slip** boundary conditions
 * Kernel fusing and some optimizations, where applicable
-* Free surface stabilization, coupled with timestep computation
+* Free surface stabilization, coupled with time step computation
 
 This so-called **free surface stabilization** implicitly advects the density field $\rho$ to the next time step. This suppresses oscillations of the free surface, the so-called **drunken sailor instability**. Thus, especially the kernel computing the y-Stokes residual is significantly more involved, but enables much larger time steps. Fig. 4 and Fig. 5 demonstrate this effect.
 
