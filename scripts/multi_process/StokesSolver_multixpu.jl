@@ -70,7 +70,6 @@ Implements a parallel pseudo-transcient Stokes solver
             @parallel compute_Residuals!(Rx, Ry, P, ρ_vy, τxx, τyy, τxy, Vx_s, Vy_s, g_y, _dx, _dy, dt_check)
             err = compute_err(Rx, Ry, ∇V, comm)
             #push!(err_evo1, err); push!(err_evo2,iter)
-            #@printf("Total steps = %d, err = %1.3e [mean_Rx=%1.3e, mean_Ry=%1.3e, mean_∇V=%1.3e] \n", iter, err, mean_Rx, mean_Ry, mean_∇V)
         end
 
         iter += 1
