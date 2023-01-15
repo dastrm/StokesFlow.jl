@@ -27,6 +27,7 @@ Also, every major function is tested by an extensive test suite.
 
 ## Script list
 TODO update
+TODO link these files where mentioned
 
 The [scripts](/scripts/) folder contains the following Julia scripts:
 - [`StokesFlow2D_multigpu.jl`](scripts/StokesFlow2D_multigpu.jl), main script
@@ -51,12 +52,14 @@ The resulting figures can be found in the folder `viz_out`.
 
 Additionally, the script allows for live visualization during computation if desired.
 
-## 2D Stokes and continuity
+## 2D Stokes and Continuity
+### Equations and Boundary Conditions
 
 The **2D Stokes and continuity** equations, assuming earth's gravity in positive $y$-direction, are:
 $$
 \frac{\partial \tau_{xx}}{\partial x} + \frac{\partial \tau_{xy}}{\partial y} - \frac{\partial P}{\partial x} = 0
-\newline
+$$
+$$
 \frac{\partial \tau_{yx}}{\partial x} + \frac{\partial \tau_{yy}}{\partial y} - \frac{\partial P}{\partial y} = -\rho g y
 \newline
 \nabla \cdot V = 0,
@@ -64,9 +67,11 @@ $$
 with
 $$
 \tau_{xx} = 2 \mu \frac{\partial V_x}{\partial x} 
-\newline
+$$
+$$
 \tau_{yy} = 2 \mu \frac{\partial V_y}{\partial y} 
-\newline
+$$
+$$
 \tau_{xy} = \mu \left(\frac{\partial V_x}{\partial y} + \frac{\partial V_y}{\partial x}  \right).
 $$
 
@@ -80,20 +85,74 @@ the other variables describe
 * $g$ : earth gravity
 * $\tau$ : deviatoric stress tensor.
 
+The **Boundary conditions** implemented here are **free slip** on all four boundaries, i.e.
+$$
+\nabla V \cdot n = 0 \ \ \ \ \mathrm{on} \ \partial\Omega.
+$$
+
+The **Initial Conditions**, i.e. the initial density and viscosity distributions, must also be specified. The function `exampleCall()` in the [`StokesSolver_multixpu.jl`](scripts/multi_process/StokesSolver_multixpu.jl) script, implementes a toy model of a plume rising in the earth's mantle. However, the low density and viscosity of the top 'air' causes some instability ('drunken sailor instability'), which is explained in the section [Details of Stokes Solver](#details-of-stokes-solver).
 
 ## Implementation
 
-### General structure and methods
+### General structure
 
-TODO: general & grid (Simon)
+After initialization, the computation loop's content is rather simple:
+
+1. **Interpolate** marker properties (density and viscosity) to the computational grid
+2. **Solve the Stokes & Continuity equations** on the grid using the interpolated material properties
+3. Use the resulting velocity field to **advect the markers** using the explicit Runge-Kutta 4th order method
+
+All of these items are implemented to fully run on either CPUs or GPUs.
+
+The computational grid, as well as possible marker locations for each process are summarized in the following figure:
+
+TODO upload figure 3.)
 
 ### Details of Marker Methods
 
-TODO: Continuity-based velocity interpolation (Simon)
+The interpolation of marker properties to the grid is implemented in the `bilinearMarkerToGrid!(..)` method in [`MarkerToGrid.jl`](scripts/multi_process/MarkerToGrid.jl). As the name suggests, the value on each grid point is determined by **bilinear** interpolation from all markers in the four cells adjacent to grid point:
+
+TODO upload figure 1.)
+
+$$
+\mathrm{val}_{ij} = \frac{\sum_{m=1}^{M}{w_m\mathrm{val}_m}}{\sum_{m=1}^{M}{w_m}}
+$$
+$$
+w_m = \frac{1-\mathrm{dxij}_m}{dx}\cdot \frac{1-\mathrm{dyij}_m}{dy},
+$$
+where
+* $M$ is the amount of markers in the four adjacent grid cells,
+* $dx$, $dy$ are the distances between grid points
+* $\mathrm{dxij}_m$, $\mathrm{dyij}_m$ are the distances between marker $m$ and grid point ($i$,$j$)
+
+Since this is a multi-process solver, special care must be taken near the domain boundaries. For example, the sums in both *numerator* and *denominator* need to be computed considering values from adjacent processes too.
+
+For the **marker advection** with an explicit scheme, the velocities must be interpolated from grid points to arbitrary points in-between. This is also done bilinearly, with an additional correction. For any point $m$ inside a cell with nodes $n = 1,2,3,4$, the velocity is:
+$$
+V_m = \left(\sum_{n=1}^{4}{\frac{1-\mathrm{dxij}_n}{dx}\cdot \frac{1-\mathrm{dyij}_n}{dy}\cdot V_n}\right) + [\mathrm{corr}_x, \mathrm{corr}_y]^T,
+$$
+where
+* $n$ loops over the four adjacent nodes
+* $\mathrm{dxij}_n$, $\mathrm{dyij}_n$ are the distances between point $m$ and grid point $n$
+* $\mathrm{corr}_x$, $\mathrm{corr}_y$ are chosen to match the so-called **continuity-based velocity interpolation** (for more information, see e.g. [here](https://presentations.copernicus.org/EGU21/EGU21-15308_presentation-h252958.pdf)). Essentially, this is a second order term coming from extending the 'stencil' by two nodes:
+  * $V_x$ : depending on whether $m$ is located in the left or right half of the cell, consider additional left or right nodes
+  * $V_y$ : depending on whether $m$ is located in the upper or lower half of the cell, consider additional upper or lower nodes
+
+TODO upload figure 2.)
+
+Since markers are allowed to move for up to half a cell per timestep, this **continuity-based velocity interpolation** makes it necessary to extend the grid velocity arrays $V_x$ and $V_y$ by two nodes in $x$ and $y$ direction, respectively. Otherwise, the correction term could not easily be determined on the 'ghost' boundaries between processes.
 
 ### Details of Stokes Solver
 
-TODO: Free surface stabilization, array sizes (Simon)
+The Stokes Solver is implemented in the `solveStokes!(..)` method in [`StokesSolver_multixpu.jl`](scripts/multi_process/StokesSolver_multixpu.jl). The basic structure and algorithm is similar to the [Stokes2D miniapp](https://github.com/omlins/ParallelStencil.jl/blob/main/miniapps/Stokes2D.jl) of [ParallelStencil.jl](https://github.com/omlins/ParallelStencil.jl), with some modifications:
+
+* **free slip** boundary conditions
+* Kernel fusing and some optimizations, where applicable
+* Free surface stabilization, coupled with timestep computation
+
+This so-called **Free surface stabilization** implicitly advects the density field $\rho$ to the next timestep. This suppresses oscillations of the free surface, the so-called **drunken sailor instability**. Thus, especially the kernel computing the y-Stokes residual is significantly more involved.
+
+TODO: insert gifs with and without free surface stabilization
 
 ## Results
 
