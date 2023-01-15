@@ -38,7 +38,7 @@ The [scripts](/scripts/) folder contains the following Julia scripts:
 - [MarkerExchange.jl](scripts/MarkerExchange.jl), helper script for marker exchange
 - [MarkerToGrid.jl](scripts/MarkerToGrid.jl), helper script for marker to grid interpolation
 - [MoveMarkers.jl](scripts/MoveMarkers.jl), helper script for marker propagation
-- [StokesFlow2D_multigpu.jl](scripts/StokesFlow2D_multixpu.jl), main script
+- [StokesFlow2D_multixpu.jl](scripts/StokesFlow2D_multixpu.jl), main script
 - [StokesSolver_multixpu.jl](scripts/StokesSolver_multixpu.jl), standalone multi-xPU Stokes solver
 - [StokesSolver_scaling.jl](scripts/StokesSolver_scaling.jl), scaling analysis script
 - [viz.jl](scripts/viz.jl), visualization script
