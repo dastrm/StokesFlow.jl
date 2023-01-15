@@ -1,10 +1,11 @@
 using ParallelStencil
 using ParallelStencil.FiniteDifferences2D
-
-const USE_GPU = if haskey(ENV, "USE_GPU")
+if !@isdefined(USE_GPU)
+    const USE_GPU = if haskey(ENV, "USE_GPU")
     ENV["USE_GPU"] == "true" ? true : false
-else
-    false
+    else
+        false
+    end
 end
 @static if USE_GPU
     @init_parallel_stencil(CUDA, Float64, 2)
@@ -52,10 +53,10 @@ Output:
 `t_tot`               : simulation end time.
 """
 @views function StokesFlow2D(Nt, Nx, Ny, Lx_glob, Ly_glob, density, viscosity;
-    dimx::Integer=0, dimy::Integer=0,
+    dimx::Integer=0, dimy::Integer=0, stokes_ϵ=1e-5,
     RAND_MARKER_POS::Bool=true,
     plot_fields_live::Bool=false, plot_markers_live::Bool=true, save_to_file::Bool=true, print_info::Bool=true,
-    init_MPI::Bool=init_MPI)
+    init_MPI::Bool=true, finalize_MPI::Bool=true)
 
     rank, dims, nprocs, coords, comm_cart = init_global_grid(Nx, Ny, 1; dimx=dimx, dimy=dimy, dimz=1, quiet=!print_info, init_MPI=init_MPI)
     grid = ImplicitGlobalGrid.get_global_grid()
@@ -171,7 +172,7 @@ Output:
                 τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy, Vx_small, Vy_small,
                 g_y, dx, dy, Nx, Ny,
                 dt, maxdisp, comm_cart; use_free_surface_stabilization=true,
-                ϵ=1e-5,
+                ϵ=stokes_ϵ,
                 print_info=print_info && rank == 0)
         end
 
@@ -227,7 +228,10 @@ Output:
             "  saving/plotting: ", times[5], " %\n")
     end
 
-    return Array(Vx), Array(Vy), t_tot
+    # create return values and finalize
+    Vx_glob, Vy_glob = gather_V_grid(Array(Vx), Array(Vy), rank, dims, Nx, Ny)
+    finalize_global_grid(;finalize_MPI=finalize_MPI)
+    return Vx_glob, Vy_glob, t_tot
 end
 
 """
@@ -421,4 +425,4 @@ Launches the main function with exemplary arguments
         RAND_MARKER_POS=true, plot_fields_live=false, plot_markers_live=true, save_to_file=true, print_info=true, init_MPI=init_MPI)
 end
 
-exampleCall()
+#exampleCall()
