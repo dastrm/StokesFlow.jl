@@ -56,21 +56,27 @@ Additionally, the script allows for live visualization during computation if des
 ### Equations and Boundary Conditions
 
 The **2D Stokes and continuity** equations, assuming earth's gravity in positive $y$-direction, are:
+
 $$
 \frac{\partial \tau_{xx}}{\partial x} + \frac{\partial \tau_{xy}}{\partial y} - \frac{\partial P}{\partial x} = 0
 $$
+
 $$
 \frac{\partial \tau_{yx}}{\partial x} + \frac{\partial \tau_{yy}}{\partial y} - \frac{\partial P}{\partial y} = -\rho g y
 \newline
 \nabla \cdot V = 0,
 $$
+
 with
+
 $$
 \tau_{xx} = 2 \mu \frac{\partial V_x}{\partial x} 
 $$
+
 $$
 \tau_{yy} = 2 \mu \frac{\partial V_y}{\partial y} 
 $$
+
 $$
 \tau_{xy} = \mu \left(\frac{\partial V_x}{\partial y} + \frac{\partial V_y}{\partial x}  \right).
 $$
@@ -86,6 +92,7 @@ the other variables describe
 * $\tau$ : deviatoric stress tensor.
 
 The **Boundary conditions** implemented here are **free slip** on all four boundaries, i.e.
+
 $$
 \nabla V \cdot n = 0 \ \ \ \ \mathrm{on} \ \partial\Omega.
 $$
@@ -117,9 +124,11 @@ TODO upload figure 1.)
 $$
 \mathrm{val}_{ij} = \frac{\sum_{m=1}^{M}{w_m\mathrm{val}_m}}{\sum_{m=1}^{M}{w_m}}
 $$
+
 $$
 w_m = \frac{1-\mathrm{dxij}_m}{dx}\cdot \frac{1-\mathrm{dyij}_m}{dy},
 $$
+
 where
 * $M$ is the amount of markers in the four adjacent grid cells,
 * $dx$, $dy$ are the distances between grid points
@@ -128,9 +137,11 @@ where
 Since this is a multi-process solver, special care must be taken near the domain boundaries. For example, the sums in both *numerator* and *denominator* need to be computed considering values from adjacent processes too.
 
 For the **marker advection** with an explicit scheme, the velocities must be interpolated from grid points to arbitrary points in-between. This is also done bilinearly, with an additional correction. For any point $m$ inside a cell with nodes $n = 1,2,3,4$, the velocity is:
+
 $$
 V_m = \left(\sum_{n=1}^{4}{\frac{1-\mathrm{dxij}_n}{dx}\cdot \frac{1-\mathrm{dyij}_n}{dy}\cdot V_n}\right) + [\mathrm{corr}_x, \mathrm{corr}_y]^T,
 $$
+
 where
 * $n$ loops over the four adjacent nodes
 * $\mathrm{dxij}_n$, $\mathrm{dyij}_n$ are the distances between point $m$ and grid point $n$
