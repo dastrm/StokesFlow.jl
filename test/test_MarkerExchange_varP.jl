@@ -1,4 +1,4 @@
-include("../scripts/multi_process/MarkerExchange.jl")
+include("../scripts/MarkerExchange.jl")
 include("../scripts/GlobalGather.jl")
 
 using Test, ImplicitGlobalGrid

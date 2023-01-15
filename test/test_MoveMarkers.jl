@@ -8,7 +8,7 @@ else
         @init_parallel_stencil(Threads, Float64, 2)
 end
 
-include("../scripts/multi_process/MoveMarkers.jl")
+include("../scripts/MoveMarkers.jl")
 include("../scripts/GlobalGather.jl")
 
 using Test

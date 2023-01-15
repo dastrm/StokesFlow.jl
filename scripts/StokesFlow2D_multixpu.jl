@@ -21,7 +21,7 @@ include("StokesSolver_multixpu.jl")
 include("MarkerToGrid.jl")
 include("MoveMarkers.jl")
 include("MarkerExchange.jl")
-include("../GlobalGather.jl")
+include("GlobalGather.jl")
 
 # uncomment for Piz Daint
 #ENV["GKSwstype"] = "nul" 
@@ -319,7 +319,7 @@ Displays or saves markers
         ρ_m_glob = ρ_m_glob[perm]
         μ_m_glob = μ_m_glob[perm]
         =#
-        opts = (color=Int.(round.(exp.(ρ_m_glob.*2))), size=(1200, 1150), margin=1mm, legend=false, yflip=true, markersize=3, markerstrokewidth=0)
+        opts = (color=Int.(round.(exp.(ρ_m_glob .* 2))), size=(1200, 1150), margin=1mm, legend=false, yflip=true, markersize=3, markerstrokewidth=0)
         p1 = plot(scatter(x_m_glob, y_m_glob; opts...))
 
         if haskey(ENV, "GKSwstype") && ENV["GKSwstype"] == "nul"

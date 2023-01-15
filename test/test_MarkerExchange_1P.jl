@@ -8,8 +8,8 @@ else
   @init_parallel_stencil(Threads, Float64, 2)
 end
 
-include("../scripts/multi_process/MarkerExchange.jl")
-include("../scripts/multi_process/common.jl")
+include("../scripts/MarkerExchange.jl")
+include("../scripts/common.jl")
 
 using Test, ImplicitGlobalGrid
 import MPI, Random

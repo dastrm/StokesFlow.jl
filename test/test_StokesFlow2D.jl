@@ -1,12 +1,12 @@
 USE_GPU = ENV["USE_GPU"] == "true" ? true : false
 
-include("../scripts/multi_process/StokesFlow2D_multixpu.jl")
+include("../scripts/StokesFlow2D_multixpu.jl")
 include("../scripts/GlobalGather.jl")
 
 using Test, ImplicitGlobalGrid
 import MPI
 
-ENV["GKSwstype"] = "nul" 
+ENV["GKSwstype"] = "nul"
 
 if !MPI.Initialized()
     MPI.Init()
@@ -97,7 +97,7 @@ for i = eachindex(dimx)
         dimx=dimx[i], dimy=dimy[i], stokes_ϵ=1e-8,
         RAND_MARKER_POS=false, plot_fields_live=false, plot_markers_live=false, save_to_file=false, print_info=false, init_MPI=false, finalize_MPI=false)
 
-    if size(Vx_glob,1) > 0 # implies rank == 0
+    if size(Vx_glob, 1) > 0 # implies rank == 0
 
         # test array sizes
         @test all(size(Vx_glob) .== (Nx_glob + 2, Ny_glob + 1))

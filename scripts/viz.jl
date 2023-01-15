@@ -42,7 +42,7 @@ Creates an animation from the markers previously saved to disk
     m = sortslices([x_m y_m ρ_m]', dims=2)
     @assert !any(isnan, m)
 
-    opts = (color=Int.(round.(exp.(m[3, :].*2))), size=(1200, 1150), margin=1mm, legend=false, markersize=3, markerstrokewidth=0)
+    opts = (color=Int.(round.(exp.(m[3, :] .* 2))), size=(1200, 1150), margin=1mm, legend=false, markersize=3, markerstrokewidth=0)
     scatter(m[1, :], m[2, :]; opts...)
   end
 

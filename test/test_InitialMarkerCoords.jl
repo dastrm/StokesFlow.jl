@@ -1,12 +1,12 @@
 USE_GPU = ENV["USE_GPU"] == "true" ? true : false
 
-include("../scripts/multi_process/common.jl")
+include("../scripts/common.jl")
 include("../scripts/GlobalGather.jl")
 
 using Random, Test, ImplicitGlobalGrid
 import MPI
 
-ENV["GKSwstype"] = "nul" 
+ENV["GKSwstype"] = "nul"
 
 if !MPI.Initialized()
     MPI.Init()
@@ -78,7 +78,7 @@ for i = eachindex(dimx)
     ly = (Ny - 1) * dy
     x0 = coords[1] * (Nx - 2) * dx
     y0 = coords[2] * (Ny - 2) * dy
-    
+
     marker_density = 3
 
     x_m, y_m, ρ_m, μ_m = initializeMarkersCPU(comm_cart, dims, coords, marker_density, lx, ly, dx, dy, Nx, Ny, false)
@@ -89,24 +89,24 @@ for i = eachindex(dimx)
     ρ_m_glob = zeros(0)
     μ_m_glob = zeros(0)
     gather_markers!(x_m, y_m, ρ_m, μ_m, x_m_glob, y_m_glob, ρ_m_glob, μ_m_glob, dims, dx, dy, lx, ly, rank, comm_cart)
- 
+
 
     if rank == 0
 
         # sort the gathered markers in preparation for comparison
-        perm = sortperm(x_m_glob.*Lx_glob.*2 .+ y_m_glob)
+        perm = sortperm(x_m_glob .* Lx_glob .* 2 .+ y_m_glob)
         x_m_glob = x_m_glob[perm]
         y_m_glob = y_m_glob[perm]
 
         # manually create marker positions as the should be
         Nmx = marker_density * (Nx_glob - 1)
         Nmy = marker_density * (Ny_glob - 1)
-        dx = Lx_glob/(Nx_glob-1)
-        dy = Ly_glob/(Ny_glob-1)
+        dx = Lx_glob / (Nx_glob - 1)
+        dy = Ly_glob / (Ny_glob - 1)
         dxm = dx / marker_density
         dym = dy / marker_density
-        xcoords = LinRange(0.5dxm, Lx_glob-0.5dxm, Nmx)
-        ycoords = LinRange(0.5dym, Ly_glob-0.5dym, Nmy)
+        xcoords = LinRange(0.5dxm, Lx_glob - 0.5dxm, Nmx)
+        ycoords = LinRange(0.5dym, Ly_glob - 0.5dym, Nmy)
         Nm = Nmx * Nmy
         x_m_ref = zeros(Nm)
         y_m_ref = zeros(Nm)
@@ -119,18 +119,18 @@ for i = eachindex(dimx)
             end
         end
         # sort the reference markers as well
-        perm = sortperm(x_m_ref.*Lx_glob.*2 .+ y_m_ref)
+        perm = sortperm(x_m_ref .* Lx_glob .* 2 .+ y_m_ref)
         x_m_ref = x_m_ref[perm]
         y_m_ref = y_m_ref[perm]
 
-        @test Nm == size(x_m_glob,1)
-        @test Nm == size(y_m_glob,1)
+        @test Nm == size(x_m_glob, 1)
+        @test Nm == size(y_m_glob, 1)
 
         @test all(x_m_glob ≈ x_m_ref)
         @test all(y_m_glob ≈ y_m_ref)
 
     end
 
-    finalize_global_grid(;finalize_MPI=false)
+    finalize_global_grid(; finalize_MPI=false)
 
 end
