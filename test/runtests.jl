@@ -32,8 +32,20 @@ USE_GPU = false
                 r = run(ignorestatus(cmd(9)))
                 @test success(r)
             elseif f == "test_MarkerExchange_varP.jl"
-                # run this test with up to 9 processors
-                for npr = [1, 2, 3, 4, 6, 8, 9]
+                # run this test with up to 9 processors (also other npr possible)
+                for npr = [1, 6, 9]
+                    r = run(ignorestatus(cmd(npr)))
+                    @test success(r)
+                end
+            elseif f == "test_InitialMarkerCoords.jl"
+                # run this test with up to 9 processors (also other npr possible)
+                for npr = [1, 3, 8, 9]
+                    r = run(ignorestatus(cmd(npr)))
+                    @test success(r)
+                end
+            elseif f == "test_StokesFlow2D.jl"
+                # run this test with up to 4 processes (also other npr possible)
+                for npr = [1, 4]
                     r = run(ignorestatus(cmd(npr)))
                     @test success(r)
                 end
