@@ -20,7 +20,6 @@ end
 Compute indices `ix`, `iy` of the top left node with respect to the given 2D position as well as the relative distances
 """
 @views function topleftIndexRelDist(x_grid_min, y_grid_min, x, y, dx, dy)
-    # TODO: ix,iy may be out of bounds if the grid does not cover (x,y), this is not checked here
     # indices: may be out of bounds if the grid does not cover (x,y)
     ix = floor(Int, (x - x_grid_min) / dx) + 1
     iy = floor(Int, (y - y_grid_min) / dy) + 1
@@ -59,8 +58,8 @@ Declares marker arrays and initializes marker coordinates
     ylimlo = yloBNDRY ? dym / 2 : dy / 2 + y_less_lo
     ylimhi = yhiBNDRY ? ly - dym / 2 : ly - dy / 2 - y_less_hi
 
-    lo_less = Int(ceil(marker_density / 2))
-    hi_less = Int(floor(marker_density / 2))
+    lo_less = Int(floor(marker_density / 2))
+    hi_less = Int(ceil(marker_density / 2))
 
     Nmx = marker_density * (Nx - 1) - (xloBNDRY ? 0 : lo_less) - (xhiBNDRY ? 0 : hi_less)
     Nmy = marker_density * (Ny - 1) - (yloBNDRY ? 0 : lo_less) - (yhiBNDRY ? 0 : hi_less)
