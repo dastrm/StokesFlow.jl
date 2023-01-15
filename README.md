@@ -43,6 +43,8 @@ The [scripts](/scripts/) folder contains the following Julia scripts:
 
 We provide a [`Project.toml`](Project.toml) file which installs all requirements upon activation. Once all packages are installed, the main script can be launched from the command line as follows:
 
+(you will also need to uncomment the last line in this script)
+
 ```sh
 mpiexecjl -n 2 julia --project=. scripts/multi_process/StokesFlow2D_multixpu.jl
 ```
@@ -90,7 +92,7 @@ The material properties (carried by markers) are
 * $\mu$ : viscosity
 * $\rho$ : density,
 
-the other variables describe
+the other variables (grid or constant) describe
 * $V = [V_x, V_y]^T$ : velocity
 * $P$ : pressure
 * $g$ : earth gravity
@@ -99,7 +101,11 @@ the other variables describe
 The **Boundary conditions** implemented here are **free slip** on all four boundaries, i.e.
 
 $$
-\nabla V \cdot n = 0 \ \ \ \ \mathrm{on} \ \partial\Omega.
+V_x = 0, \ \ \frac{\partial V_y}{\partial x} = 0 \ \ \ \ \mathrm{on\ vertical\ boundaries}
+$$
+
+$$
+V_y = 0, \ \ \frac{\partial V_x}{\partial y} = 0 \ \ \ \ \mathrm{on\ horizontal\ boundaries}
 $$
 
 The **Initial Conditions**, i.e. the initial density and viscosity distributions, must also be specified. The function `exampleCall()` in the [`StokesSolver_multixpu.jl`](scripts/multi_process/StokesSolver_multixpu.jl) script, implementes a toy model of a plume rising in the earth's mantle. However, the low density and viscosity of the top 'air' causes some instability ('drunken sailor instability'), which is explained in the section [Details of Stokes Solver](#details-of-stokes-solver).
@@ -117,11 +123,11 @@ After initialization, the computation loop's content is rather simple:
 
 All the computation (the first three points) are implemented to fully run on either CPUs or GPUs.
 
-The computational grid, as well as possible marker locations for each process are summarized in the Fig.1:
+The local domains, as well as overlaps and possible marker locations for each process are summarized in Fig.1:
 
 | ![Domain](figures/domain.png) |
 | :-----------------------------------: |
-| Fig. 1: Local Domain and Marker Positions. |
+| Fig. 1: Local Domain and Marker Positions of the bottom right process. |
 
 ### Details of Marker Methods
 
@@ -173,9 +179,15 @@ The Stokes Solver is implemented in the `solveStokes!(..)` method in [`StokesSol
 * Kernel fusing and some optimizations, where applicable
 * Free surface stabilization, coupled with timestep computation
 
-This so-called **Free surface stabilization** implicitly advects the density field $\rho$ to the next timestep. This suppresses oscillations of the free surface, the so-called **drunken sailor instability**. Thus, especially the kernel computing the y-Stokes residual is significantly more involved.
+This so-called **Free surface stabilization** implicitly advects the density field $\rho$ to the next timestep. This suppresses oscillations of the free surface, the so-called **drunken sailor instability**. Thus, especially the kernel computing the y-Stokes residual is significantly more involved, but enables much larger timesteps. The following animations demonstrate the effect:
 
-TODO: insert gifs with and without free surface stabilization
+| ![drunkensailor](figures/without_stabilization.gif) |
+| :-----------------------------------: |
+| Fig. x: Markers with Drunken Sailor Instability. |
+
+| ![nodrunkensailor](figures/with_stabilization.gif) |
+| :-----------------------------------: |
+| Fig. x: Markers with Free Surface Stabilization. |
 
 ## Results and Discussion
 
@@ -192,7 +204,32 @@ TODO: insert gifs with and without free surface stabilization
     <figcaption>Fig. 3: Markers.<figcaption>
 <figure>
 
-TODO insert scaling plots
+### Visualizations
+
+TODO show some nice results
+
+### Scaling
+TODO explain computation time
+
+First, **strong scaling** on a single GPU was measured. `T_eff` might seem rather small, however keep in mind that the solver needs to access many more arrays than the ideal lower bound. Also, Kernel fusing is not always possible due to dependencies, which increases memory accesses as well.
+
+As expected, we can nicely observe rising effective throughput with increasing the grid size.
+
+| ![gridref](figures/strongScaling.png) |
+| :-----------------------------: |
+| Fig. 5: Strong Scaling on 1 GPU. |
+
+Second, **weak scaling** measurements were also performed with up to 64 processes, with the best local grid size. We can see that the runtime is never increased by more than `2.5%`, which is really nice. The communication/computation overlap must work well! Weirdly, even a reduced runtime can be observed with 4 ranks.
+
+| ![gridref](figures/weakScaling.png) |
+| :-----------------------------: |
+| Fig. 5: Highest, lowest and mean Relative Runtime of all ranks, on up to 64 GPUs. |
+
+
+### Convergence
+
+TODO make residual plot
+
 
 ## Open Issues and Further Work
 
@@ -201,6 +238,8 @@ TODO insert scaling plots
 * For the specific parameter combination of **both** `USE_GPU=true` **and** `--check-bounds=yes`, the results of the Stokes Solver are different, and thus the reference tests don't pass. This is very strange, especially since no bounds check ever fails.
 
 * To model actually interesting phenomena, the physics could be extended in various ways. For example, coupling with the heat equation, different heating mechanisms and heat-dependent changes in material properties could be implemented.
+
+* Advanced marker functionality such as injecting markers where there are too few, is not implemented.
 
 ## TODO
 

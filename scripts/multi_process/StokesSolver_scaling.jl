@@ -186,7 +186,7 @@ Saves the previously obtained strong scaling results in a PNG image
         T_effs = [0.0018550084168725862, 1.416857988642739, 5.49423268225653, 17.75075949591282, 48.50176567051899, 84.65386033605694, 74.80117298231426, 87.45290984407542]
     end
 
-    p = plot(log.(all_n), T_effs, xlabel="log(Nx)=log(Ny)", ylabel="T_eff [GB/s]", label="np=1", title="Strong Scaling")
+    p = plot(all_n, T_effs, xaxis=:log, xticks=(all_n,all_n), xlabel="Nx = Ny", ylabel="T_eff [GB/s]", label="np=1", title="Strong Scaling")
     png(p, "strongScaling.png")
 
     return nothing
@@ -237,9 +237,9 @@ Saves the previously obtained weak scaling results in a PNG image
     runtime_avg_rel = runtime_avg ./ runtime_avg[1]
     runtime_max_rel = runtime_max ./ runtime_max[1]
 
-    plot(log.(np), runtime_max_rel; label="max")
-    plot!(log.(np), runtime_avg_rel; label="avg")
-    p = plot!(log.(np), runtime_min_rel; xlabel="log(np)", ylabel="runtime_rel", label="min", title="Weak Scaling")
+    plot(np, runtime_max_rel; xaxis=:log, xticks=(np,np), label="max")
+    plot!(np, runtime_avg_rel; xaxis=:log, xticks=(np,np), label="avg")
+    p = plot!(np, runtime_min_rel; xaxis=:log, xticks=(np,np), xlabel="np", ylabel="runtime_rel", label="min", title="Weak Scaling")
     png(p, "weakScaling.png")
 
     return nothing
