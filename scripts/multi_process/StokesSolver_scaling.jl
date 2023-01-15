@@ -143,7 +143,7 @@ Calculates the effective memory throughput of the Stokes solver
     GC.gc()
     GC.enable(false)
     _, T_eff, runtime = solveStokes!(P, Vx, Vy, ρ_vy, μ_b, μ_p, τxx, τyy, τxy, ∇V, dτPt, Rx, Ry, dVxdτ, dVydτ, dτVx, dτVy,
-        Vx_small, Vy_small, g_y, dx, dy, Nx, Ny, dt, maxdisp, comm_cart; use_free_surface_stabilization=true, ϵ=1e-5, print_info=false, iterMax=50)
+        Vx_small, Vy_small, g_y, dx, dy, Nx, Ny, dt, maxdisp, comm_cart; use_free_surface_stabilization=true, ϵ=1e-5, print_info=false, iterMax=200)
     GC.enable(true)
 
     finalize_global_grid(; finalize_MPI=false)
@@ -154,13 +154,13 @@ end
 """
     strongScaling()
 
-Performs strong scaling with one process and saves the results in a PNG image
+Performs strong scaling with one process and saves the results in a PNG image if desired
 """
-@views function strongScaling()
+@views function strongScaling(; doPlot=false)
     MPI.Init()
     @assert MPI.Comm_size(MPI.COMM_WORLD) == 1 "Strong scaling needs 1 process"
 
-    all_n = [2^(5 + i) for i = 0:5]
+    all_n = [2^(5 + i) for i = 0:7]
     T_effs = []
     for n = all_n
         T_eff, _ = timeStokesSolver(n)
@@ -170,7 +170,23 @@ Performs strong scaling with one process and saves the results in a PNG image
 
     MPI.Finalize()
 
-    p = plot(all_n, T_effs, xlabel="Nx=Ny", ylabel="T_eff [GB/s]", title="Strong Scaling")
+    (doPlot) && strongScalingPlot(; all_n, T_effs)
+
+    return nothing
+end
+
+"""
+    strongScalingPlot()
+
+Saves the previously obtained strong scaling results in a PNG image
+"""
+@views function strongScalingPlot(; all_n=[], T_effs=[])
+    if (size(all_n, 1) == 0 || size(T_effs, 1) == 0)
+        all_n = [2^(5 + i) for i = 0:7]
+        T_effs = [0.0018550084168725862, 1.416857988642739, 5.49423268225653, 17.75075949591282, 48.50176567051899, 84.65386033605694, 74.80117298231426, 87.45290984407542]
+    end
+
+    p = plot(log.(all_n), T_effs, xlabel="log(Nx)=log(Ny)", ylabel="T_eff [GB/s]", label="np=1", title="Strong Scaling")
     png(p, "strongScaling.png")
 
     return nothing
@@ -185,7 +201,7 @@ Performs one weak scaling run with a given amount of processes
     MPI.Init()
     # run sequentally with 1,4,16,25,64 processes
 
-    n = 2^6 # TODO: best n according to strong scaling
+    n = 2^12 # best n according to strong scaling
     _, runtime = timeStokesSolver(n)
 
     runtime_min = MPI.Reduce(runtime, MPI.MIN, 0, MPI.COMM_WORLD)
@@ -214,21 +230,22 @@ Saves the previously obtained weak scaling results in a PNG image
 @views function weakScalingPlot()
     np = [1, 4, 16, 25, 64]
 
-    runtime_min = [1.0, 2.0, 3.0, 4.0, 5.0] # TODO: insert values from weakScaling()
-    runtime_avg = [1.0, 2.0, 3.0, 4.0, 5.0] # TODO: insert values from weakScaling()
-    runtime_max = [1.0, 2.0, 3.0, 4.0, 5.0] # TODO: insert values from weakScaling()
+    runtime_min = [1.751560926437378, 1.7373709678649902, 1.759911060333252, 1.7845380306243896, 1.7845640182495117]
+    runtime_avg = [1.751560926437378, 1.7379335165023804, 1.7621422111988068, 1.7871957397460938, 1.7893556505441666]
+    runtime_max = [1.751560926437378, 1.7392380237579346, 1.7633659839630127, 1.7909419536590576, 1.7955429553985596]
     runtime_min_rel = runtime_min ./ runtime_min[1]
     runtime_avg_rel = runtime_avg ./ runtime_avg[1]
     runtime_max_rel = runtime_max ./ runtime_max[1]
 
-    plot(np, runtime_min_rel; label="min")
-    plot!(np, runtime_avg_rel; label="avg")
-    p = plot!(np, runtime_max_rel; xlabel="np", ylabel="runtime_rel", label="max", title="Weak Scaling")
+    plot(log.(np), runtime_max_rel; label="max")
+    plot!(log.(np), runtime_avg_rel; label="avg")
+    p = plot!(log.(np), runtime_min_rel; xlabel="log(np)", ylabel="runtime_rel", label="min", title="Weak Scaling")
     png(p, "weakScaling.png")
 
     return nothing
 end
 
-#strongScaling()  # TODO: run this
-#weakScaling() # TODO: run this
-#weakScalingPlot() # TODO: run this
+#strongScaling()
+strongScalingPlot()
+#weakScaling()
+weakScalingPlot()
