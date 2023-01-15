@@ -14,6 +14,8 @@ Also, every major function is tested by an extensive test suite.
 
 ## Content
 
+TODO update
+
 - [StokesFlow.jl](#stokesflowjl)
   - [Introduction](#introduction)
   - [Content](#content)
@@ -27,7 +29,10 @@ Also, every major function is tested by an extensive test suite.
 
 ## Script list
 TODO update
+
 TODO link these files where mentioned
+
+TODO figure enumeration
 
 The [scripts](/scripts/) folder contains the following Julia scripts:
 - [`StokesFlow2D_multigpu.jl`](scripts/StokesFlow2D_multigpu.jl), main script
@@ -108,18 +113,19 @@ After initialization, the computation loop's content is rather simple:
 1. **Interpolate** marker properties (density and viscosity) to the computational grid
 2. **Solve the Stokes & Continuity equations** on the grid using the interpolated material properties
 3. Use the resulting velocity field to **advect the markers** using the explicit Runge-Kutta 4th order method
+4. **Exchange markers** that have travelled outside their process' region.
 
-All of these items are implemented to fully run on either CPUs or GPUs.
+All the computation (the first three points) are implemented to fully run on either CPUs or GPUs.
 
-The computational grid, as well as possible marker locations for each process are summarized in the following figure:
+The computational grid, as well as possible marker locations for each process are summarized in the Fig.1:
 
-TODO upload figure 3.)
+| ![Domain](figures/domain.png) |
+| :-----------------------------------: |
+| Fig. 1: Local Domain and Marker Positions. |
 
 ### Details of Marker Methods
 
 The interpolation of marker properties to the grid is implemented in the `bilinearMarkerToGrid!(..)` method in [`MarkerToGrid.jl`](scripts/multi_process/MarkerToGrid.jl). As the name suggests, the value on each grid point is determined by **bilinear** interpolation from all markers in the four cells adjacent to grid point:
-
-TODO upload figure 1.)
 
 $$
 \mathrm{val}_{ij} = \frac{\sum_{m=1}^{M}{w_m\mathrm{val}_m}}{\sum_{m=1}^{M}{w_m}}
@@ -133,6 +139,10 @@ where
 * $M$ is the amount of markers in the four adjacent grid cells,
 * $dx$, $dy$ are the distances between grid points
 * $\mathrm{dxij}_m$, $\mathrm{dyij}_m$ are the distances between marker $m$ and grid point ($i$,$j$)
+
+| ![Domain](figures/markerGrid.png) |
+| :-----------------------------------: |
+| Fig. 2: Geometry of 'Marker to Grid' interpolation. |
 
 Since this is a multi-process solver, special care must be taken near the domain boundaries. For example, the sums in both *numerator* and *denominator* need to be computed considering values from adjacent processes too.
 
@@ -149,9 +159,11 @@ where
   * $V_x$ : depending on whether $m$ is located in the left or right half of the cell, consider additional left or right nodes
   * $V_y$ : depending on whether $m$ is located in the upper or lower half of the cell, consider additional upper or lower nodes
 
-TODO upload figure 2.)
+| ![Domain](figures/gridMarker.png) |
+| :-----------------------------------: |
+| Fig. 3: Geometry of 'Grid to Entire Domain' interpolation. |
 
-Since markers are allowed to move for up to half a cell per timestep, this **continuity-based velocity interpolation** makes it necessary to extend the grid velocity arrays $V_x$ and $V_y$ by two nodes in $x$ and $y$ direction, respectively. Otherwise, the correction term could not easily be determined on the 'ghost' boundaries between processes.
+Since markers are allowed to move for up to half a cell per timestep, this **continuity-based velocity interpolation** makes it necessary to extend the grid velocity arrays $V_x$ and $V_y$ by two nodes in $x$ and $y$ direction, respectively (cf. Fig.1). Otherwise, the correction term could not easily be determined on the 'ghost' boundaries between processes.
 
 ### Details of Stokes Solver
 
@@ -165,23 +177,22 @@ This so-called **Free surface stabilization** implicitly advects the density fie
 
 TODO: insert gifs with and without free surface stabilization
 
-## Results
+## Results and Discussion
 
 | ![markersref](figures/markersref.gif) |
 | :-----------------------------------: |
-|           Fig. 1: Markers.            |
+|           Fig. 4: Markers.            |
 
 | ![gridref](figures/gridref.gif) |
 | :-----------------------------: |
-|          Fig. 2: Grid.          |
+|          Fig. 5: Grid.          |
 
 <figure>
     <img src="figures/markersref.gif">
     <figcaption>Fig. 3: Markers.<figcaption>
 <figure>
 
-
-## Discussion
+TODO insert scaling plots
 
 ## Open Issues and Further Work
 
